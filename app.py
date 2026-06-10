@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from data_receiver import load_svg_layers
-from polygon_grouping import group_objects_inside_layers, group_objects_inside_layers_v3, group_objects_inside_layers_v4
+from polygon_grouping import group_objects_inside_layers, group_objects_inside_layers_v4
 from data_representation import render_grouped_layers
 from wall_generation import generate_and_render_walls
 from path_generation import get_path_base
@@ -12,7 +12,7 @@ from merging_path_and_rect import merge_wall_layers
 
 board_game_name = "Arnak"
 
-SVG_FILE = Path(fr"D:\board_game_inserts\{board_game_name}.svg")
+SVG_FILE = Path(fr"D:\board_game_insert_code\{board_game_name}.svg")
 
 OUT_DIR = SVG_FILE.parent / f"{board_game_name}_subitems"
 WALL_DIR = SVG_FILE.parent / f"{board_game_name}_walls"

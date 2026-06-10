@@ -332,6 +332,7 @@ def modify_and_plot_walls_by_parent_id(
 
                 update_wall_from_bounds(wall)
 
+
             elif "inner" in wall["id"]:
 
                 if b["height"] > b["width"]:
@@ -369,7 +370,14 @@ def modify_and_plot_walls_by_parent_id(
             tolerance=0.01,
         )
 
+        for i in range(len(final_parent_walls)):
+            try:
+                final_parent_walls[i]["fill"][0]["bounds"] = final_parent_walls[i]["bounds"]
+            except Exception as e:
+                print(e)
+
         final_walls_by_parent[parent_id] = final_parent_walls
+
 
         plt.figure(figsize=(10, 8))
 

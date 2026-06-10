@@ -4,12 +4,17 @@ import matplotlib.pyplot as plt
 from shapely.geometry import box
 
 
-BLACK_COLORS = {
+FULL_HOLE_COLORS = {
     "#000000",
     "#000",
     "#1a1a1a",
     "black",
 }
+
+HALF_HOLE_COLORS = {
+    "#552200",
+}
+
 
 
 def safe_filename(name):
@@ -113,9 +118,14 @@ def get_fill_for_polygon(source_fill, target_polygon):
     return result
 
 
-def is_black_object(obj):
+def is_full_hole_object(obj):
     fill = normalize_color(obj.get("fill"))
-    return fill in BLACK_COLORS
+    return fill in FULL_HOLE_COLORS
+
+
+def is_half_hole_object(obj):
+    fill = normalize_color(obj.get("fill"))
+    return fill in HALF_HOLE_COLORS
 
 
 def make_wall(wall_id, parent_id, wall_type, polygon, source_id=None, fill=None):
@@ -203,7 +213,6 @@ def generate_outer_walls(group, wall_thickness=4):
 
 def generate_inner_walls(group, wall_thickness=4, existing_walls=None):
     parent_id = group["outer"]["id"]
-    wall_fill = group["outer"].get("fill")
     walls = []
 
     if existing_walls is None:
@@ -216,7 +225,7 @@ def generate_inner_walls(group, wall_thickness=4, existing_walls=None):
         obj_id = obj["id"]
         minx, miny, maxx, maxy = obj["polygon"].bounds
 
-        if is_black_object(obj):
+        if is_full_hole_object(obj):
             touching_wall_types = find_touching_wall_types(
                 obj["polygon"],
                 existing_walls,
@@ -236,11 +245,40 @@ def generate_inner_walls(group, wall_thickness=4, existing_walls=None):
                     "full_hole",
                     obj["polygon"],
                     obj_id,
-                    "#000000",
+                    obj.get("fill"),
                 )
             )
-
             continue
+
+        if is_half_hole_object(obj):
+            touching_wall_types = find_touching_wall_types(
+                obj["polygon"],
+                existing_walls,
+                tolerance=0.01,
+            )
+
+            if touching_wall_types:
+                touching_name = "_".join(touching_wall_types)
+                hole_id = f"{parent_id}_{obj_id}_half_hole_on_{touching_name}"
+            else:
+                hole_id = f"{parent_id}_{obj_id}_half_hole"
+
+            walls.append(
+                make_wall(
+                    hole_id,
+                    parent_id,
+                    "half_hole",
+                    obj["polygon"],
+                    obj_id,
+                    obj.get("fill"),
+                )
+            )
+            continue
+
+        wall_fill = obj.get("fill")
+
+        if normalize_color(wall_fill) == "#ffffff" and "container_fill" in obj:
+            wall_fill = obj["container_fill"]
 
         walls.extend([
             make_wall(
@@ -415,7 +453,6 @@ def render_walls_2d(wall_layers, out_dir):
                         linewidth=1,
                     )
 
-            for wall in parent_walls:
                 if wall["type"].startswith("inner_"):
                     plot_wall_with_fill_parts(
                         wall,
@@ -431,12 +468,20 @@ def render_walls_2d(wall_layers, out_dir):
                         linewidth=2,
                     )
 
-            for wall in parent_walls:
                 if wall["type"] == "full_hole":
                     plot_polygon(
                         wall["polygon"],
-                        fill_color="#000000",
+                        fill_color=clean_color(wall.get("fill"), "#000000"),
                         edge_color="red",
+                        linewidth=2,
+                        alpha=0.4,
+                    )
+
+                if wall["type"] == "half_hole":
+                    plot_polygon(
+                        wall["polygon"],
+                        fill_color="#552200",
+                        edge_color="orange",
                         linewidth=2,
                         alpha=0.4,
                     )
@@ -501,6 +546,11 @@ def cleanup_walls(walls, tolerance=0.25):
         if wall["type"] == "full_hole"
     ]
 
+    half_holes = [
+        wall for wall in walls
+        if wall["type"] == "half_hole"
+    ]
+
     kept_inner_walls = []
 
     for inner in inner_walls:
@@ -527,7 +577,7 @@ def cleanup_walls(walls, tolerance=0.25):
         if not remove_inner:
             kept_inner_walls.append(inner)
 
-    return base_walls + outer_walls + kept_inner_walls + full_holes
+    return base_walls + outer_walls + kept_inner_walls + full_holes + half_holes
 
 
 def generate_and_render_walls(
