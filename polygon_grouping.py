@@ -167,39 +167,38 @@ def group_objects_inside_layers_v4(layers, tolerance=0.5):
                 if inner is outer:
                     continue
 
-                if inner["area"] >= outer["area"]:
-                    continue
-
-                outer_poly = outer["polygon"]
-                inner_poly = inner["polygon"]
-
-                if inner_poly.area <= 0 or outer_poly.area <= 0:
-                    continue
-
-                percentage_of_coverage = (
-                    inner_poly.intersection(outer_poly).area / inner_poly.area
-                )
-
-                distance = 100
+                inner_coords = bounds_dict_from_poly(inner["polygon"])
+                outer_coords = bounds_dict_from_poly(outer["polygon"])
                 if inner["id"] == "rect7" and outer["id"] == "rect11":
-                    print("what")
-                if inner["id"] == "rect7" and outer["id"] == "rect6":
-                    print("what")
-                if outer.get("fill") not in SPECIAL_INNER_COLORS and inner.get("fill") == '#ffffff':
-                    distance = inner_poly.boundary.distance(outer_poly.boundary)
+                    print("yay")
+                if (inner_coords["x1"]>outer_coords["x1"] and inner_coords["x2"]<outer_coords["x2"]) or (inner_coords["y1"]>outer_coords["y1"] and inner_coords["y2"]<outer_coords["y2"]):
 
-                if percentage_of_coverage > 0.1 or distance < 0.2:
-                    if "inner" not in outer:
-                        outer["inner"] = []
+                    outer_poly = outer["polygon"]
+                    inner_poly = inner["polygon"]
 
-                    outer["inner"].append(inner)
-                    overlaps.append(outer)
+                    if inner_poly.area <= 0 or outer_poly.area <= 0:
+                        continue
 
-            if len(overlaps) > 1:
-                true_overlap.append(overlaps)
+                    percentage_of_coverage = (
+                        inner_poly.intersection(outer_poly).area / inner_poly.area
+                    )
 
-                for outer in overlaps:
-                    true_overlap_ids.add(outer["id"])
+                    distance = 100
+                    if outer.get("fill") not in SPECIAL_INNER_COLORS and inner.get("fill") == '#ffffff':
+                        distance = inner_poly.boundary.distance(outer_poly.boundary)
+
+                    if percentage_of_coverage > 0.1 or distance < 0.2:
+                        if "inner" not in outer:
+                            outer["inner"] = []
+
+                        outer["inner"].append(inner)
+                        overlaps.append(outer)
+
+                if len(overlaps) > 1:
+                    true_overlap.append(overlaps)
+
+                    for outer in overlaps:
+                        true_overlap_ids.add(outer["id"])
 
         deduped_true_overlaps = []
 

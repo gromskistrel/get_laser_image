@@ -2,6 +2,7 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 from shapely.geometry import box
+import copy
 
 
 def split_walls_by_parent_id(walls):
@@ -102,6 +103,7 @@ def update_wall_from_bounds(wall):
         wall.get("fill"),
         wall["polygon"],
     )
+
 
 
 def update_bounds_from_polygon(wall):
@@ -287,10 +289,49 @@ def modify_and_plot_walls_by_parent_id(
     wall_width,
     out_dir,
 ):
+    for brown_hole_wall in walls:
+        if brown_hole_wall["fill"][0]["color"] == "#552200":
+            for i in range(len(walls)):
+                if walls[i]["fill"][0]["color"] != "#ffffff":
+                    percentage_of_coverage = (
+                            brown_hole_wall["polygon"].intersection(walls[i]["polygon"]).area / brown_hole_wall["polygon"].area
+                    )
+                    if percentage_of_coverage > 0.8:
+                        start = -1
+                        end = -1
+                        different_heights = len(walls[i]["fill"])
+                        if walls[i]["bounds"]["width"] > walls[i]["bounds"]["height"]:
+                            for j in range(different_heights):
+                                    if j != different_heights:
+                                        if walls[i]["fill"][j]["bounds"]["x1"] < brown_hole_wall["fill"][0]["bounds"]["x1"] < walls[i]["fill"][j]["bounds"]["x2"]:
+                                            start = j
+                                        if walls[i]["fill"][j]["bounds"]["x1"] < brown_hole_wall["fill"][0]["bounds"]["x2"] < walls[i]["fill"][j]["bounds"]["x2"]:
+                                            end = j
+                                    else:
+                                        if start == -1:
+                                            start = j
+                                        if end == -1:
+                                            end = j
+                            left_wall = copy.deepcopy(walls[i]["fill"][start])
+                            right_wall = copy.deepcopy(walls[i]["fill"][end])
+                            left_wall["bounds"]["x2"] = brown_hole_wall["fill"][0]["bounds"]["x1"]
+                            right_wall["bounds"]["x1"] = brown_hole_wall["fill"][0]["bounds"]["x2"]
+                            if start != end:
+                                walls[i]["fill"][start] = left_wall
+                                walls[i]["fill"][end] = right_wall
+                                walls[i]["fill"] = walls[i]["fill"][:(start-1)]+brown_hole_wall["fill"]+walls[i]["fill"][end:]
+                            else:
+                                walls[i]["fill"] = walls[i]["fill"][:(start-1)]+[left_wall]+brown_hole_wall["fill"]+[right_wall]+walls[i]["fill"][end:]
+
+    new_walls = []
+    for wall in walls:
+        if wall["fill"][0]["color"] != "#552200":
+            new_walls.append(wall)
+
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    walls_by_parent = split_walls_by_parent_id(walls)
+    walls_by_parent = split_walls_by_parent_id(new_walls)
     final_walls_by_parent = {}
 
     for parent_id, parent_walls in walls_by_parent.items():
@@ -369,12 +410,6 @@ def modify_and_plot_walls_by_parent_id(
             parent_walls,
             tolerance=0.01,
         )
-
-        for i in range(len(final_parent_walls)):
-            try:
-                final_parent_walls[i]["fill"][0]["bounds"] = final_parent_walls[i]["bounds"]
-            except Exception as e:
-                print(e)
 
         final_walls_by_parent[parent_id] = final_parent_walls
 
