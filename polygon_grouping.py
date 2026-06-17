@@ -169,8 +169,6 @@ def group_objects_inside_layers_v4(layers, tolerance=0.5):
 
                 inner_coords = bounds_dict_from_poly(inner["polygon"])
                 outer_coords = bounds_dict_from_poly(outer["polygon"])
-                if inner["id"] == "rect7" and outer["id"] == "rect11":
-                    print("yay")
                 if (inner_coords["x1"]>outer_coords["x1"] and inner_coords["x2"]<outer_coords["x2"]) or (inner_coords["y1"]>outer_coords["y1"] and inner_coords["y2"]<outer_coords["y2"]):
 
                     outer_poly = outer["polygon"]

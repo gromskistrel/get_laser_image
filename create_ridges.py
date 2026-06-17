@@ -1,6 +1,23 @@
 import matplotlib.pyplot as plt
 from pathlib import Path
 from shapely.geometry import box
+from matplotlib.patches import Rectangle
+
+
+def plot_bounds_rect(bounds, fill_color, edge_color="black", linewidth=1, alpha=0.4):
+    fill_color = clean_color(fill_color)
+
+    rect = Rectangle(
+        (bounds["x1"], bounds["y1"]),
+        bounds["x2"] - bounds["x1"],
+        bounds["y2"] - bounds["y1"],
+        facecolor=fill_color,
+        edgecolor=edge_color,
+        linewidth=linewidth,
+        alpha=alpha,
+    )
+
+    plt.gca().add_patch(rect)
 
 
 def bounds_poly_from_dict(bounds):
@@ -80,8 +97,8 @@ def plot_wall_with_fill_parts(
 
     if isinstance(fill, list):
         if not fill:
-            plot_polygon(
-                wall["polygon"],
+            plot_bounds_rect(
+                wall["bounds"],
                 fill_color="#cccccc",
                 edge_color=edge_color,
                 linewidth=linewidth,
@@ -90,14 +107,8 @@ def plot_wall_with_fill_parts(
             return
 
         for fill_part in fill:
-            fill_poly = bounds_poly_from_dict(fill_part["bounds"])
-            clipped = fill_poly.intersection(wall["polygon"])
-
-            if clipped.is_empty:
-                continue
-
-            plot_polygon(
-                clipped,
+            plot_bounds_rect(
+                fill_part["bounds"],
                 fill_color=fill_part.get("color"),
                 edge_color=edge_color,
                 linewidth=linewidth,
@@ -106,8 +117,8 @@ def plot_wall_with_fill_parts(
 
         return
 
-    plot_polygon(
-        wall["polygon"],
+    plot_bounds_rect(
+        wall["bounds"],
         fill_color=fill,
         edge_color=edge_color,
         linewidth=linewidth,
@@ -137,7 +148,7 @@ def plot_single_polygon_debug(key, polygon, out_dir):
     plt.figure(figsize=(10, 8))
 
     for rectangle in polygon:
-        if "base" in rectangle["id"]:
+        if rectangle["id"].endswith("_base"):
             continue
 
         plot_wall_with_fill_parts(
@@ -158,11 +169,13 @@ def plot_single_polygon_debug(key, polygon, out_dir):
                 linewidth=3,
             )
 
-        centroid = rectangle["polygon"].centroid
+        b = rectangle["bounds"]
+        centroid_x = (b["x1"] + b["x2"]) / 2
+        centroid_y = (b["y1"] + b["y2"]) / 2
 
         plt.text(
-            centroid.x,
-            centroid.y,
+            centroid_x,
+            centroid_y,
             rectangle["id"],
             fontsize=5,
             ha="center",
@@ -203,8 +216,8 @@ def add_connection_info_to_walls(walls, out_dir=None):
                 if (
                     rectangle == other_rectangle
                     or rectangle["direction"] == other_rectangle["direction"]
-                    or "base" in rectangle["id"]
-                    or "base" in other_rectangle["id"]
+                    or rectangle["id"].endswith("_base")
+                    or other_rectangle["id"].endswith("_base")
                 ):
                     continue
 
