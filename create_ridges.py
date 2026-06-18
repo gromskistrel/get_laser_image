@@ -197,132 +197,140 @@ def plot_single_polygon_debug(key, polygon, out_dir):
     plt.close()
 
 
-def add_connection_info_to_walls(walls, out_dir=None):
+def add_connection_info_to_walls(wall_layers, out_dir=None, render=False):
     tolerance = 1
+    returned = {}
 
-    for key, polygon in walls.items():
-        print(key)
+    for layer_name, walls in wall_layers.items():
+        print(layer_name)
 
-        for rectangle in polygon:
-            if rectangle["bounds"]["height"] > rectangle["bounds"]["width"]:
-                rectangle["direction"] = "vertical"
-            else:
-                rectangle["direction"] = "horizontal"
+        returned[layer_name] = {}
 
-            rectangle["ridges"] = []
+        layer_out_dir = None
+        if render and out_dir is not None:
+            layer_out_dir = Path(out_dir) / layer_name
 
-        for rectangle in polygon:
-            for other_rectangle in polygon:
-                if (
-                    rectangle == other_rectangle
-                    or rectangle["direction"] == other_rectangle["direction"]
-                    or rectangle["id"].endswith("_base")
-                    or other_rectangle["id"].endswith("_base")
-                ):
-                    continue
+        for key, polygon in walls.items():
+            print(key)
 
-                b = rectangle["bounds"]
-                ob = other_rectangle["bounds"]
-
-                if rectangle["direction"] == "vertical":
-                    if b["x1"] > (ob["x1"] - tolerance) and b["x2"] < (ob["x2"] + tolerance):
-
-                        if b["y1"] > (ob["y1"] - tolerance) and b["y1"] < (ob["y2"] + tolerance):
-                            print(
-                                f"top_distance {rectangle['id']} {other_rectangle['id']}: "
-                                f"{b['y1'] - ob['y2']}"
-                            )
-
-                            rectangle["ridges"].append({
-                                "direction": "head_top",
-                                "location": {
-                                    "start": [b["x1"], b["y1"]],
-                                    "end": [b["x2"], b["y1"]],
-                                },
-                            })
-
-                            other_rectangle["ridges"].append({
-                                "direction": "side_bottom",
-                                "location": {
-                                    "start": [b["x1"], ob["y2"]],
-                                    "end": [b["x2"], ob["y2"]],
-                                },
-                            })
-
-                        if b["y2"] > (ob["y1"] - tolerance) and b["y2"] < (ob["y2"] + tolerance):
-                            print(
-                                f"bottom_distance {rectangle['id']} {other_rectangle['id']}: "
-                                f"{b['y2'] - ob['y1']}"
-                            )
-
-                            rectangle["ridges"].append({
-                                "direction": "head_bottom",
-                                "location": {
-                                    "start": [b["x1"], b["y2"]],
-                                    "end": [b["x2"], b["y2"]],
-                                },
-                            })
-
-                            other_rectangle["ridges"].append({
-                                "direction": "side_top",
-                                "location": {
-                                    "start": [b["x1"], ob["y1"]],
-                                    "end": [b["x2"], ob["y1"]],
-                                },
-                            })
-
+            for rectangle in polygon:
+                if rectangle["bounds"]["height"] > rectangle["bounds"]["width"]:
+                    rectangle["direction"] = "vertical"
                 else:
-                    if b["y1"] > (ob["y1"] - tolerance) and b["y2"] < (ob["y2"] + tolerance):
+                    rectangle["direction"] = "horizontal"
 
-                        if b["x1"] > (ob["x1"] - tolerance) and b["x1"] < (ob["x2"] + tolerance):
-                            print(
-                                f"left_distance {rectangle['id']} {other_rectangle['id']}: "
-                                f"{b['x1'] - ob['x2']}"
-                            )
+                rectangle["ridges"] = []
 
-                            rectangle["ridges"].append({
-                                "direction": "head_left",
-                                "location": {
-                                    "start": [b["x1"], b["y1"]],
-                                    "end": [b["x1"], b["y2"]],
-                                },
-                            })
+            for rectangle in polygon:
+                for other_rectangle in polygon:
+                    if (
+                        rectangle == other_rectangle
+                        or rectangle["direction"] == other_rectangle["direction"]
+                        or rectangle["id"].endswith("_base")
+                        or other_rectangle["id"].endswith("_base")
+                    ):
+                        continue
 
-                            other_rectangle["ridges"].append({
-                                "direction": "side_right",
-                                "location": {
-                                    "start": [ob["x2"], b["y1"]],
-                                    "end": [ob["x2"], b["y2"]],
-                                },
-                            })
+                    b = rectangle["bounds"]
+                    ob = other_rectangle["bounds"]
 
-                        if b["x2"] > (ob["x1"] - tolerance) and b["x2"] < (ob["x2"] + tolerance):
-                            print(
-                                f"right_distance {rectangle['id']} {other_rectangle['id']}: "
-                                f"{b['x2'] - ob['x1']}"
-                            )
+                    if rectangle["direction"] == "vertical":
+                        if (
+                            b["x1"] > ob["x1"] - tolerance
+                            and b["x2"] < ob["x2"] + tolerance
+                        ):
+                            if (
+                                b["y1"] > ob["y1"] - tolerance
+                                and b["y1"] < ob["y2"] + tolerance
+                            ):
+                                rectangle["ridges"].append({
+                                    "direction": "head_top",
+                                    "location": {
+                                        "start": [b["x1"], b["y1"]],
+                                        "end": [b["x2"], b["y1"]],
+                                    },
+                                })
 
-                            rectangle["ridges"].append({
-                                "direction": "head_right",
-                                "location": {
-                                    "start": [b["x2"], b["y1"]],
-                                    "end": [b["x2"], b["y2"]],
-                                },
-                            })
+                                other_rectangle["ridges"].append({
+                                    "direction": "side_bottom",
+                                    "location": {
+                                        "start": [b["x1"], ob["y2"]],
+                                        "end": [b["x2"], ob["y2"]],
+                                    },
+                                })
 
-                            other_rectangle["ridges"].append({
-                                "direction": "side_left",
-                                "location": {
-                                    "start": [ob["x1"], b["y1"]],
-                                    "end": [ob["x1"], b["y2"]],
-                                },
-                            })
+                            if (
+                                b["y2"] > ob["y1"] - tolerance
+                                and b["y2"] < ob["y2"] + tolerance
+                            ):
+                                rectangle["ridges"].append({
+                                    "direction": "head_bottom",
+                                    "location": {
+                                        "start": [b["x1"], b["y2"]],
+                                        "end": [b["x2"], b["y2"]],
+                                    },
+                                })
 
-        if out_dir is not None:
-            plot_single_polygon_debug(
-                key,
-                polygon,
-                out_dir,
-            )
+                                other_rectangle["ridges"].append({
+                                    "direction": "side_top",
+                                    "location": {
+                                        "start": [b["x1"], ob["y1"]],
+                                        "end": [b["x2"], ob["y1"]],
+                                    },
+                                })
 
-    return walls
+                    else:
+                        if (
+                            b["y1"] > ob["y1"] - tolerance
+                            and b["y2"] < ob["y2"] + tolerance
+                        ):
+                            if (
+                                b["x1"] > ob["x1"] - tolerance
+                                and b["x1"] < ob["x2"] + tolerance
+                            ):
+                                rectangle["ridges"].append({
+                                    "direction": "head_left",
+                                    "location": {
+                                        "start": [b["x1"], b["y1"]],
+                                        "end": [b["x1"], b["y2"]],
+                                    },
+                                })
+
+                                other_rectangle["ridges"].append({
+                                    "direction": "side_right",
+                                    "location": {
+                                        "start": [ob["x2"], b["y1"]],
+                                        "end": [ob["x2"], b["y2"]],
+                                    },
+                                })
+
+                            if (
+                                b["x2"] > ob["x1"] - tolerance
+                                and b["x2"] < ob["x2"] + tolerance
+                            ):
+                                rectangle["ridges"].append({
+                                    "direction": "head_right",
+                                    "location": {
+                                        "start": [b["x2"], b["y1"]],
+                                        "end": [b["x2"], b["y2"]],
+                                    },
+                                })
+
+                                other_rectangle["ridges"].append({
+                                    "direction": "side_left",
+                                    "location": {
+                                        "start": [ob["x1"], b["y1"]],
+                                        "end": [ob["x1"], b["y2"]],
+                                    },
+                                })
+
+            if render and layer_out_dir is not None:
+                plot_single_polygon_debug(
+                    f"{layer_name}_{key}",
+                    polygon,
+                    layer_out_dir,
+                )
+
+            returned[layer_name][key] = polygon
+
+    return returned

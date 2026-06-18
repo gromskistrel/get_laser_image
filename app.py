@@ -50,8 +50,9 @@ def main():
     )
 
     walls_with_ridges = add_connection_info_to_walls(
-        wall_layers["Layer 1"],
+        wall_layers,
         out_dir=WALL_DIR / "debug_ridges_by_parent",
+        render=True,
     )
 
     print("\nDone.")

@@ -342,9 +342,10 @@ def generate_walls_for_layers(grouped_layers, wall_thickness=4):
         wall_layers[layer_name] = []
 
         for group in groups:
-            wall_layers[layer_name].extend(
-                generate_walls_for_group(group, wall_thickness)
-            )
+            if "path" not in group["outer"]["id"]:
+                wall_layers[layer_name].extend(
+                    generate_walls_for_group(group, wall_thickness)
+                )
 
     return wall_layers
 
