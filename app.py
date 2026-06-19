@@ -10,7 +10,7 @@ from create_ridges import add_connection_info_to_walls
 from merging_path_and_rect import merge_wall_layers
 
 
-board_game_name = "Eclipse"
+board_game_name = "Dune imperium"
 
 SVG_FILE = Path(fr"D:\board_game_inserts\{board_game_name}.svg")
 

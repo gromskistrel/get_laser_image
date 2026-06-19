@@ -2,6 +2,7 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 from shapely.geometry import box
+import math
 
 
 FULL_HOLE_COLORS = {
@@ -525,6 +526,13 @@ def print_wall_coordinates(wall_layers):
                 f"width={b['width']:.3f}, height={b['height']:.3f}"
             )
 
+def bounds_close(b1, b2, tol=0.1):
+    return (
+        math.isclose(b1["x1"], b2["x1"], abs_tol=tol) and
+        math.isclose(b1["x2"], b2["x2"], abs_tol=tol) and
+        math.isclose(b1["y1"], b2["y1"], abs_tol=tol) and
+        math.isclose(b1["y2"], b2["y2"], abs_tol=tol)
+    )
 
 def cleanup_walls(walls, tolerance=0.25):
     base_walls = [
@@ -554,16 +562,20 @@ def cleanup_walls(walls, tolerance=0.25):
 
     kept_inner_walls = []
 
+    walls_for_removal_test = inner_walls + outer_walls
     for inner in inner_walls:
         inner_poly = inner["polygon"]
         remove_inner = False
 
-        for outer in outer_walls:
-            outer_poly = outer["polygon"].buffer(tolerance)
+        for removal_wall in walls_for_removal_test:
+            if "rect156" in inner["id"]:
+                print("no")
+            if inner != removal_wall and not bounds_close(inner["bounds"], removal_wall["bounds"]):
+                outer_poly = removal_wall["polygon"].buffer(tolerance)
 
-            if outer_poly.contains(inner_poly) or outer_poly.covers(inner_poly):
-                remove_inner = True
-                break
+                if outer_poly.contains(inner_poly) or outer_poly.covers(inner_poly):
+                    remove_inner = True
+                    break
 
         if remove_inner:
             continue

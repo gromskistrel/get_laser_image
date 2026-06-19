@@ -210,10 +210,8 @@ def add_connection_info_to_walls(wall_layers, out_dir=None, render=False):
         if render and out_dir is not None:
             layer_out_dir = Path(out_dir) / layer_name
 
-        for key, polygon in walls.items():
-            print(key)
-
-            for rectangle in polygon:
+        for key, polygons in walls.items():
+            for rectangle in polygons:
                 if rectangle["bounds"]["height"] > rectangle["bounds"]["width"]:
                     rectangle["direction"] = "vertical"
                 else:
@@ -221,8 +219,123 @@ def add_connection_info_to_walls(wall_layers, out_dir=None, render=False):
 
                 rectangle["ridges"] = []
 
-            for rectangle in polygon:
-                for other_rectangle in polygon:
+            to_remove = set()
+            to_add = []
+
+            for i in range(len(polygons)):
+                for j in range(i + 1, len(polygons)):
+
+                    if i in to_remove or j in to_remove:
+                        continue
+
+                    if (
+                            "inner" in polygons[i]["id"]
+                            and "inner" in polygons[j]["id"]
+                            and polygons[i]["direction"] == polygons[j]["direction"]
+                    ):
+
+                        if polygons[i]["direction"] == "horizontal":
+                            if (
+                                    polygons[j]["bounds"]["y1"] + 0.1 > polygons[i]["bounds"]["y1"] >
+                                    polygons[j]["bounds"]["y1"] - 0.1
+                                    and polygons[j]["bounds"]["y2"] + 0.1 > polygons[i]["bounds"]["y2"] >
+                                    polygons[j]["bounds"]["y2"] - 0.1
+                            ):
+                                ordered = [polygons[i], polygons[j]] if polygons[i]["bounds"]["x1"] < \
+                                                                        polygons[j]["bounds"]["x1"] else [polygons[j],
+                                                                                                          polygons[i]]
+
+                                new_polygon = ordered[0].copy()
+                                new_polygon["bounds"] = ordered[0]["bounds"].copy()
+
+                                fill_middle = {
+                                    "color": "#000001",
+                                    "bounds": {
+                                        "height": ordered[0]["bounds"]["y2"] - ordered[0]["bounds"]["y1"],
+                                        "width": ordered[1]["bounds"]["x1"] - ordered[0]["bounds"]["x2"],
+                                        "x1": ordered[0]["bounds"]["x2"],
+                                        "x2": ordered[1]["bounds"]["x1"],
+                                        "y1": ordered[0]["bounds"]["y1"],
+                                        "y2": ordered[0]["bounds"]["y2"],
+                                    },
+                                }
+
+                                fill_middle["bounds"]["polygon"] = bounds_poly_from_dict(fill_middle["bounds"])
+
+                                new_polygon["fill"] = ordered[0]["fill"] + [fill_middle] + ordered[1]["fill"]
+                                new_polygon["bounds"]["x2"] = ordered[1]["bounds"]["x2"]
+                                new_polygon["bounds"]["width"] = new_polygon["bounds"]["x2"] - new_polygon["bounds"][
+                                    "x1"]
+                                new_polygon["bounds"]["polygon"] = bounds_poly_from_dict(new_polygon["bounds"])
+
+                                new_polygon["ridges"].append({
+                                    "direction": "middle_high",
+                                    "location": {
+                                        "start": [fill_middle["bounds"]["x1"], fill_middle["bounds"]["y1"]],
+                                        "end": [fill_middle["bounds"]["x2"], fill_middle["bounds"]["y2"]],
+                                    },
+                                })
+
+                                to_remove.add(i)
+                                to_remove.add(j)
+                                to_add.append(new_polygon)
+
+                        if polygons[i]["direction"] == "vertical":
+                            if (
+                                    polygons[j]["bounds"]["x1"] + 0.1 > polygons[i]["bounds"]["x1"] >
+                                    polygons[j]["bounds"]["x1"] - 0.1
+                                    and polygons[j]["bounds"]["x2"] + 0.1 > polygons[i]["bounds"]["x2"] >
+                                    polygons[j]["bounds"]["x2"] - 0.1
+                            ):
+
+                                ordered = [polygons[i], polygons[j]] if polygons[i]["bounds"]["y1"] < \
+                                                                        polygons[j]["bounds"]["y1"] else [polygons[j],
+                                                                                                          polygons[i]]
+
+                                new_polygon = ordered[0].copy()
+                                new_polygon["bounds"] = ordered[0]["bounds"].copy()
+
+                                fill_middle = {
+                                    "color": "#000002",
+                                    "bounds": {
+                                        "height": ordered[1]["bounds"]["y1"] - ordered[0]["bounds"]["y2"],
+                                        "width": ordered[0]["bounds"]["x2"] - ordered[0]["bounds"]["x1"],
+                                        "y1": ordered[0]["bounds"]["y2"],
+                                        "y2": ordered[1]["bounds"]["y1"],
+                                        "x1": ordered[0]["bounds"]["x1"],
+                                        "x2": ordered[0]["bounds"]["x2"],
+                                    },
+                                }
+
+                                fill_middle["bounds"]["polygon"] = bounds_poly_from_dict(fill_middle["bounds"])
+
+                                new_polygon["fill"] = ordered[0]["fill"] + [fill_middle] + ordered[1]["fill"]
+                                new_polygon["bounds"]["y2"] = ordered[1]["bounds"]["y2"]
+                                new_polygon["bounds"]["height"] = new_polygon["bounds"]["y2"] - new_polygon["bounds"][
+                                    "y1"]
+                                new_polygon["bounds"]["polygon"] = bounds_poly_from_dict(new_polygon["bounds"])
+
+                                new_polygon["ridges"].append({
+                                    "direction": "middle_low",
+                                    "location": {
+                                        "start": [fill_middle["bounds"]["x1"], fill_middle["bounds"]["y1"]],
+                                        "end": [fill_middle["bounds"]["x2"], fill_middle["bounds"]["y2"]],
+                                    },
+                                })
+
+                                to_remove.add(i)
+                                to_remove.add(j)
+                                to_add.append(new_polygon)
+
+            walls[key] = [
+                             polygon
+                             for index, polygon in enumerate(polygons)
+                             if index not in to_remove
+                         ] + to_add
+
+        for key, polygons in walls.items():
+            for rectangle in polygons:
+                for other_rectangle in polygons:
                     if (
                         rectangle == other_rectangle
                         or rectangle["direction"] == other_rectangle["direction"]
@@ -327,10 +440,10 @@ def add_connection_info_to_walls(wall_layers, out_dir=None, render=False):
             if render and layer_out_dir is not None:
                 plot_single_polygon_debug(
                     f"{layer_name}_{key}",
-                    polygon,
+                    polygons,
                     layer_out_dir,
                 )
 
-            returned[layer_name][key] = polygon
+            returned[layer_name][key] = polygons
 
     return returned
