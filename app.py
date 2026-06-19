@@ -8,6 +8,7 @@ from path_generation import get_path_base
 from get_touching_points import modify_and_plot_wall_layers
 from create_ridges import add_connection_info_to_walls
 from merging_path_and_rect import merge_wall_layers
+from creating_bottom_holes import get_bottom_with_holes
 
 
 board_game_name = "Dune imperium"
@@ -54,6 +55,9 @@ def main():
         out_dir=WALL_DIR / "debug_ridges_by_parent",
         render=True,
     )
+
+    new_wall = get_bottom_with_holes(walls_with_ridges,  out_dir=WALL_DIR / "holes",
+        render=True)
 
     print("\nDone.")
 
