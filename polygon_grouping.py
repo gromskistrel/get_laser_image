@@ -1,9 +1,8 @@
 from shapely.ops import unary_union
 
 
-SPECIAL_INNER_COLORS = {"#ffffff", "#000000", "#552200"}
+SPECIAL_INNER_COLORS = {"#ffffff", "#000000", "#552200", "#803300"}
 
-BROWN = "#552200"
 
 
 def object_color(obj):
@@ -28,52 +27,6 @@ def add_fill_part(obj, color, polygon):
     return obj
 
 
-def apply_brown_overlays(outer, inside):
-    brown_objects = [
-        obj for obj in inside
-        if object_color(obj) == BROWN
-    ]
-
-    non_brown_inside = [
-        obj for obj in inside
-        if object_color(obj) != BROWN
-    ]
-
-    for brown in brown_objects:
-        brown_poly = brown["polygon"]
-
-        best_target_index = None
-        best_area = 0
-
-        for idx, candidate in enumerate(non_brown_inside):
-            inter = brown_poly.intersection(candidate["polygon"])
-
-            if not inter.is_empty and inter.area > best_area:
-                best_area = inter.area
-                best_target_index = idx
-
-        if best_target_index is not None:
-            target = non_brown_inside[best_target_index]
-            inter = brown_poly.intersection(target["polygon"])
-
-            non_brown_inside[best_target_index] = add_fill_part(
-                target,
-                BROWN,
-                inter,
-            )
-        else:
-            inter = brown_poly.intersection(outer["polygon"])
-
-            if not inter.is_empty:
-                outer = add_fill_part(
-                    outer,
-                    BROWN,
-                    inter,
-                )
-
-    return outer, non_brown_inside
-
-
 def bounds_dict_from_poly(poly):
     minx, miny, maxx, maxy = poly.bounds
 
@@ -82,8 +35,8 @@ def bounds_dict_from_poly(poly):
         "y1": miny,
         "x2": maxx,
         "y2": maxy,
-        "width": maxx - minx,
-        "height": maxy - miny,
+        "length": maxx - minx,
+        "width": maxy - miny,
     }
 
 
@@ -169,7 +122,9 @@ def group_objects_inside_layers_v4(layers, tolerance=0.5):
 
                 inner_coords = bounds_dict_from_poly(inner["polygon"])
                 outer_coords = bounds_dict_from_poly(outer["polygon"])
-                if (inner_coords["x1"]>outer_coords["x1"] and inner_coords["x2"]<outer_coords["x2"]) or (inner_coords["y1"]>outer_coords["y1"] and inner_coords["y2"]<outer_coords["y2"]):
+                if inner["id"] == "rect79" and outer["id"] == "rect22":
+                    print("yay")
+                if (inner_coords["x1"]>=outer_coords["x1"]+0.1 and inner_coords["x2"]<=outer_coords["x2"]-0.1) or (inner_coords["y1"]+0.1>=outer_coords["y1"] and inner_coords["y2"]-0.1<=outer_coords["y2"]):
 
                     outer_poly = outer["polygon"]
                     inner_poly = inner["polygon"]

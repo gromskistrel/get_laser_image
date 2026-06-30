@@ -12,8 +12,9 @@ FULL_HOLE_COLORS = {
     "black",
 }
 
-HALF_HOLE_COLORS = {
+BROWN_COLORS = {
     "#552200",
+    "#803300"
 }
 
 
@@ -30,8 +31,8 @@ def bounds_dict_from_poly(poly):
         "y1": miny,
         "x2": maxx,
         "y2": maxy,
-        "width": maxx - minx,
-        "height": maxy - miny,
+        "length": maxx - minx,
+        "width": maxy - miny,
     }
 
 
@@ -126,7 +127,7 @@ def is_full_hole_object(obj):
 
 def is_half_hole_object(obj):
     fill = normalize_color(obj.get("fill"))
-    return fill in HALF_HOLE_COLORS
+    return fill in BROWN_COLORS
 
 
 def make_wall(wall_id, parent_id, wall_type, polygon, source_id=None, fill=None):
@@ -138,6 +139,7 @@ def make_wall(wall_id, parent_id, wall_type, polygon, source_id=None, fill=None)
         "polygon": polygon,
         "fill": get_fill_for_polygon(fill, polygon),
         "bounds": bounds_dict_from_poly(polygon),
+        "angle": 1
     }
 
 
@@ -480,9 +482,8 @@ def render_walls_2d(wall_layers, out_dir):
                     )
 
                 if wall["type"] == "half_hole":
-                    plot_polygon(
-                        wall["polygon"],
-                        fill_color="#552200",
+                    plot_wall_with_fill_parts(
+                        wall,
                         edge_color="orange",
                         linewidth=2,
                         alpha=0.4,
@@ -523,7 +524,7 @@ def print_wall_coordinates(wall_layers):
                 f"fill={wall.get('fill')} | "
                 f"x1={b['x1']:.3f}, y1={b['y1']:.3f}, "
                 f"x2={b['x2']:.3f}, y2={b['y2']:.3f}, "
-                f"width={b['width']:.3f}, height={b['height']:.3f}"
+                f"length={b['length']:.3f}, width={b['width']:.3f}"
             )
 
 def bounds_close(b1, b2, tol=0.1):
@@ -535,6 +536,12 @@ def bounds_close(b1, b2, tol=0.1):
     )
 
 def cleanup_walls(walls, tolerance=0.25):
+    for wall in walls:
+        if wall["bounds"]["length"] > wall["bounds"]["width"]:
+            wall["orientation"] = "horizontal"
+        else:
+            wall["orientation"] = "vertical"
+
     base_walls = [
         wall for wall in walls
         if wall["type"] == "base"
@@ -568,8 +575,6 @@ def cleanup_walls(walls, tolerance=0.25):
         remove_inner = False
 
         for removal_wall in walls_for_removal_test:
-            if "rect156" in inner["id"]:
-                print("no")
             if inner != removal_wall and not bounds_close(inner["bounds"], removal_wall["bounds"]):
                 outer_poly = removal_wall["polygon"].buffer(tolerance)
 
@@ -589,6 +594,62 @@ def cleanup_walls(walls, tolerance=0.25):
 
         if not remove_inner:
             kept_inner_walls.append(inner)
+
+    removed_walls = []
+    merged_walls = []
+    for wall1 in kept_inner_walls:
+        for wall2 in kept_inner_walls:
+            if wall1 != wall2:
+                if wall1["orientation"] == wall2["orientation"]:
+                    if (wall1["orientation"] == "horizontal" and wall2["bounds"]["y1"] + 0.1 > wall1["bounds"][
+                        "y1"] > wall2["bounds"]["y1"] - 0.1
+                            and wall2["bounds"]["y2"] + 0.1 > wall1["bounds"]["y2"] > wall2["bounds"][
+                                "y2"] - 0.1):
+                        intersection_area = wall1["polygon"].intersection(wall2["polygon"]).area
+                        coverage_ratio = intersection_area / wall1["polygon"].area
+                        if coverage_ratio > 0.1:
+                            if wall1["bounds"]["x1"] < wall2["bounds"]["x1"]:
+                                ordered = [wall1, wall2]
+                            else:
+                                ordered = [wall2, wall1]
+                            removed_walls.extend(ordered)
+                            new_wall = ordered[0]
+                            new_wall["bounds"]["x2"] = ordered[1]["bounds"]["x2"]
+                            new_wall["fill"][0]["bounds"]["x2"] = ordered[1]["bounds"]["x2"]
+                            new_wall["bounds"]["length"] = new_wall["bounds"]["x2"]-new_wall["bounds"]["x1"]
+                            new_wall["fill"][0]["bounds"]["length"] = new_wall["bounds"]["x2"] - new_wall["bounds"]["x1"]
+                            new_wall["polygon"] = bounds_poly_from_dict(new_wall["bounds"])
+                            if new_wall not in merged_walls:
+                                merged_walls.append(new_wall)
+                    elif (wall1["orientation"] == "vertical" and wall2["bounds"]["x1"] + 0.1 > wall1["bounds"][
+                        "x1"] > wall2["bounds"]["x1"] - 0.1
+                          and wall2["bounds"]["x2"] + 0.1 > wall1["bounds"]["x2"] > wall2["bounds"][
+                              "x2"] - 0.1):
+                        intersection_area = wall1["polygon"].intersection(wall2["polygon"]).area
+                        coverage_ratio = intersection_area / wall1["polygon"].area
+                        if coverage_ratio > 0.1:
+                            removed_walls.extend((wall1, wall2))
+                            if wall1["bounds"]["y1"] < wall2["bounds"]["y1"]:
+                                ordered = [wall1, wall2]
+                            else:
+                                ordered = [wall2, wall1]
+                            removed_walls.extend(ordered)
+                            new_wall = ordered[0]
+                            new_wall["bounds"]["y2"] = ordered[1]["bounds"]["y2"]
+                            new_wall["fill"][0]["bounds"]["y2"] = ordered[1]["bounds"]["y2"]
+                            new_wall["bounds"]["width"] = new_wall["bounds"]["y2"] - new_wall["bounds"]["y1"]
+                            new_wall["fill"][0]["bounds"]["width"] = new_wall["bounds"]["y2"] - new_wall["bounds"]["y1"]
+                            new_wall["polygon"] = bounds_poly_from_dict(new_wall["bounds"])
+                            if new_wall not in merged_walls:
+                                merged_walls.append(new_wall)
+
+    new_kept_inner_walls = []
+    for kept_inner_wall in kept_inner_walls:
+        if kept_inner_wall not in removed_walls:
+            new_kept_inner_walls.append(kept_inner_wall)
+
+
+    kept_inner_walls = new_kept_inner_walls + merged_walls
 
     return base_walls + outer_walls + kept_inner_walls + full_holes + half_holes
 

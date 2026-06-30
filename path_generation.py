@@ -4,8 +4,8 @@ from shapely.geometry import box
 
 
 def update_bounds_size(bounds):
-    bounds["width"] = abs(bounds["x2"] - bounds["x1"])
-    bounds["height"] = abs(bounds["y2"] - bounds["y1"])
+    bounds["length"] = abs(bounds["x2"] - bounds["x1"])
+    bounds["width"] = abs(bounds["y2"] - bounds["y1"])
     return bounds
 
 
@@ -90,7 +90,7 @@ def sync_fill_bounds_to_line(fill_part, line):
     b = fill_part["bounds"]
     lb = line["bounds"]
 
-    is_horizontal = lb["width"] > lb["height"]
+    is_horizontal = lb["length"] > lb["width"]
 
     if is_horizontal:
         b["x1"] = max(b["x1"], lb["x1"])
@@ -115,7 +115,7 @@ def insert_black_wall_into_line_fill(line, black_wall):
     line = copy.deepcopy(line)
     black_wall = normalize_black_wall(black_wall)
 
-    is_horizontal = line["bounds"]["width"] > line["bounds"]["height"]
+    is_horizontal = line["bounds"]["length"] > line["bounds"]["width"]
 
     if is_horizontal:
         start_key = "x1"
@@ -181,8 +181,8 @@ def insert_black_wall_into_line_fill(line, black_wall):
     line["fill"] = [
         fill_part
         for fill_part in new_fill
-        if fill_part["bounds"]["width"] > 0
-        and fill_part["bounds"]["height"] > 0
+        if fill_part["bounds"]["length"] > 0
+        and fill_part["bounds"]["width"] > 0
     ]
 
     return line
@@ -201,7 +201,7 @@ def split_wall_around_black_fills(wall):
     wall = copy.deepcopy(wall)
     b = wall["bounds"]
 
-    is_horizontal = b["width"] > b["height"]
+    is_horizontal = b["length"] > b["width"]
 
     if is_horizontal:
         start_key = "x1"
@@ -424,8 +424,8 @@ def get_path_base(layers, wall_thickness):
                 "x2": max(base_line["bounds"][0], base_line["bounds"][2]),
                 "y1": min(base_line["bounds"][1], base_line["bounds"][3]),
                 "y2": max(base_line["bounds"][1], base_line["bounds"][3]),
-                "width": abs(base_line["bounds"][0] - base_line["bounds"][2]),
-                "height": abs(base_line["bounds"][1] - base_line["bounds"][3]),
+                "length": abs(base_line["bounds"][0] - base_line["bounds"][2]),
+                "width": abs(base_line["bounds"][1] - base_line["bounds"][3]),
             }
 
             lines.append(base_line)
@@ -450,7 +450,7 @@ def get_path_base(layers, wall_thickness):
                         percent_coverage = coverage
                         biggest_coverage_index = i
 
-                if biggest_coverage_index is not None and percent_coverage > 0:
+                if biggest_coverage_index is not None and percent_coverage > 0.5:
                     lines[biggest_coverage_index] = insert_black_wall_into_line_fill(
                         lines[biggest_coverage_index],
                         black_wall,

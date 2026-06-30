@@ -13,13 +13,13 @@ from matplotlib.patches import Rectangle
 def plot_bounds_rect(bounds, fill_color, edge_color="black", linewidth=1, alpha=0.5):
     x = bounds["x1"]
     y = bounds["y1"]
-    width = bounds["x2"] - bounds["x1"]
-    height = bounds["y2"] - bounds["y1"]
+    length = bounds["x2"] - bounds["x1"]
+    width = bounds["y2"] - bounds["y1"]
 
     rect = Rectangle(
         (x, y),
+        length,
         width,
-        height,
         facecolor=fill_color,
         edgecolor=edge_color,
         linewidth=linewidth,
@@ -50,12 +50,11 @@ def bounds_dict_from_poly(poly):
         "y1": miny,
         "x2": maxx,
         "y2": maxy,
-        "width": maxx - minx,
-        "height": maxy - miny,
+        "length": maxx - minx,
+        "width": maxy - miny,
     }
 
-
-def bounds_poly_from_dict(bounds):
+def polygon_from_bounds(bounds):
     return box(
         bounds["x1"],
         bounds["y1"],
@@ -97,7 +96,7 @@ def get_fill_for_polygon(source_fill, target_polygon):
         }]
 
     for fill_part in source_fill:
-        fill_poly = bounds_poly_from_dict(fill_part["bounds"])
+        fill_poly = polygon_from_bounds(fill_part["bounds"])
         intersection = fill_poly.intersection(target_polygon)
 
         if not intersection.is_empty and intersection.area > 0:
@@ -107,27 +106,6 @@ def get_fill_for_polygon(source_fill, target_polygon):
             })
 
     return result
-
-
-def update_wall_from_bounds(wall):
-    b = wall["bounds"]
-
-    wall["polygon"] = box(
-        b["x1"],
-        b["y1"],
-        b["x2"],
-        b["y2"],
-    )
-
-    b["width"] = b["x2"] - b["x1"]
-    b["height"] = b["y2"] - b["y1"]
-
-    wall["fill"] = get_fill_for_polygon(
-        wall.get("fill"),
-        wall["polygon"],
-    )
-
-
 
 def update_bounds_from_polygon(wall):
     wall["bounds"] = bounds_dict_from_poly(wall["polygon"])
@@ -169,64 +147,6 @@ def split_geometry_into_polygons(geometry):
 
     return []
 
-
-def split_walls_around_full_holes(parent_walls, tolerance=0.01):
-    full_holes = [
-        wall
-        for wall in parent_walls
-        if wall["type"] == "full_hole"
-    ]
-
-    if not full_holes:
-        return [
-            wall for wall in parent_walls
-            if wall["type"] != "full_hole"
-        ]
-
-    result = []
-
-    for wall in parent_walls:
-        if wall["type"] == "full_hole":
-            continue
-
-        if wall["type"] == "base":
-            result.append(wall)
-            continue
-
-        polygon = wall["polygon"]
-
-        touching_holes = [
-            hole
-            for hole in full_holes
-            if polygon.buffer(tolerance).intersects(hole["polygon"])
-        ]
-
-        if not touching_holes:
-            result.append(wall)
-            continue
-
-        for hole in touching_holes:
-            polygon = polygon.difference(
-                hole["polygon"].buffer(tolerance)
-            )
-
-        pieces = split_geometry_into_polygons(polygon)
-
-        for index, piece in enumerate(pieces, start=1):
-            if piece.area <= 0:
-                continue
-
-            result.append(
-                clone_wall_with_polygon(
-                    wall,
-                    piece,
-                    index,
-                )
-            )
-
-    return result
-
-
 def plot_polygon(
     poly,
     fill_color="#cccccc",
@@ -261,89 +181,125 @@ def plot_polygon(
                 alpha=alpha,
             )
 
+HOLE_COLORS = {"#552200", "#000000", "#803300"}
 
-def plot_wall_with_fill_parts(
-    wall,
-    edge_color="black",
-    linewidth=1,
-    alpha=0.4,
-):
-    fill = wall.get("fill")
+def order_walls_fills_by_color(wall, color):
+    if len(wall["fill"]) != 1:
+        skey = wall["edge_indices"]["wall_start_index"]
+        ekey = wall["edge_indices"]["wall_end_index"]
 
-    if isinstance(fill, list):
-        if not fill:
-            plot_polygon(
-                wall["polygon"],
-                fill_color="#cccccc",
-                edge_color=edge_color,
-                linewidth=linewidth,
-                alpha=alpha,
-            )
-            return
+        to_remove = set()
+        to_add = []
 
-        for fill_part in fill:
-            fill_poly = bounds_poly_from_dict(fill_part["bounds"])
-            clipped = fill_poly.intersection(wall["polygon"])
-
-            if clipped.is_empty:
+        for i, hole_fill in enumerate(wall["fill"]):
+            if hole_fill["color"] != color:
                 continue
 
-            plot_polygon(
-                clipped,
-                fill_color=fill_part.get("color"),
-                edge_color=edge_color,
-                linewidth=linewidth,
-                alpha=alpha,
-            )
+            hole_start = hole_fill["bounds"][skey]
+            hole_end = hole_fill["bounds"][ekey]
 
-        return
+            for j, fill in enumerate(wall["fill"]):
+                if i == j:
+                    continue
 
-    plot_polygon(
-        wall["polygon"],
-        fill_color=fill,
-        edge_color=edge_color,
-        linewidth=linewidth,
-        alpha=alpha,
-    )
+                fill_start = fill["bounds"][skey]
+                fill_end = fill["bounds"][ekey]
+
+                if fill_start < hole_start and fill_end > hole_end:
+                    right_fill = copy.deepcopy(wall["fill"][j])
+
+                    wall["fill"][j]["bounds"][ekey] = hole_start
+                    right_fill["bounds"][skey] = hole_end
+
+                    to_add.append(right_fill)
+
+                elif fill_start < hole_start < fill_end:
+                    fill["bounds"][ekey] = hole_start
+
+                elif fill_start > hole_start and fill_end < hole_end:
+                    to_remove.add(j)
+
+                elif fill_start < hole_end < fill_end:
+                    fill["bounds"][skey] = hole_end
+
+                if abs(fill["bounds"][ekey]-fill["bounds"][skey]) < 0.001:
+                    to_remove.add(j)
+
+        wall["fill"] = [
+            fill
+            for i, fill in enumerate(wall["fill"])
+            if i not in to_remove
+        ]
+
+        wall["fill"].extend(to_add)
+        for fill in wall["fill"]:
+            fill["bounds"]["length"] = fill["bounds"]["x2"]-fill["bounds"]["x1"]
+            fill["bounds"]["width"] = fill["bounds"]["y2"]-fill["bounds"]["y1"]
+        wall["fill"] = sorted(wall["fill"], key=lambda x: x["bounds"][skey])
+    return wall
 
 def add_holes_to_color(walls):
     for wall in walls:
-        if wall["bounds"]["width"] > wall["bounds"]["height"]:
+        if wall["bounds"]["length"] > wall["bounds"]["width"]:
             wall_edge_index = {"wall_start_index": "x1", "wall_end_index": "x2"}
         else:
             wall_edge_index = {"wall_start_index": "y1", "wall_end_index": "y2"}
+
         if len(wall["fill"]) > 0:
-            wall["fill"] = sorted(wall["fill"], key=lambda x: x["bounds"][wall_edge_index["wall_start_index"]])
+            wall["fill"] = sorted(
+                wall["fill"],
+                key=lambda x: x["bounds"][wall_edge_index["wall_start_index"]]
+            )
             wall["edge_indices"] = wall_edge_index
+
     for hole_wall in walls:
-        if hole_wall["fill"][0]["color"] == "#552200" or hole_wall["fill"][0]["color"] == "#000000":
-            for i in range(len(walls)):
-                if walls[i]["id"] == hole_wall["id"]:
-                    continue
+        if not any(fill["color"] in HOLE_COLORS for fill in hole_wall["fill"]):
+            continue
 
-                if walls[i]["fill"][0]["color"] != "#ffffff":
-                    percentage_of_coverage = (
-                            hole_wall["polygon"].intersection(walls[i]["polygon"]).area
-                            / hole_wall["polygon"].area
-                    )
+        for i in range(len(walls)):
+            if walls[i]["id"] == hole_wall["id"]:
+                continue
 
-                    if percentage_of_coverage > 0.8:
-                        walls[i] = wall_insert(walls[i], hole_wall)
+            if walls[i]["fill"][0]["color"] != "#ffffff":
+                percentage_of_coverage = (
+                    hole_wall["polygon"].intersection(walls[i]["polygon"]).area
+                    / hole_wall["polygon"].area
+                )
+
+                if percentage_of_coverage > 0.8:
+                    walls[i]["fill"].append(hole_wall["fill"][0])
+
+    for wall in walls:
+        wall["fill"] = sorted(
+            wall["fill"],
+            key=lambda x: x["bounds"][wall["edge_indices"]["wall_start_index"]]
+        )
+
+        for color in ["#000000", "#552200", "#803300"]:
+            previous_fill = None
+
+            while previous_fill != wall["fill"]:
+                previous_fill = copy.deepcopy(wall["fill"])
+                wall = order_walls_fills_by_color(wall, color)
 
     new_walls = []
     for wall in walls:
-        if wall["fill"][0]["color"] not in ["#552200", "#000000"]:
+        if not (
+            len(wall["fill"]) == 1
+            and wall["fill"][0]["color"] in HOLE_COLORS
+        ):
             new_walls.append(wall)
+
     return new_walls
 
 def wall_insert(wall, hole_wall):
     start = -1
     end = -1
-    different_heights = len(wall["fill"])
+    different_widths = len(wall["fill"])
     if len(wall["fill"]) > 0:
         wall["fill"] = sorted(wall["fill"], key=lambda x: x["bounds"][wall["edge_indices"]["wall_start_index"]])
-    for j in range(different_heights):
-        if j != different_heights:
+    for j in range(different_widths):
+        if j != different_widths:
             if wall["fill"][j]["bounds"][wall["edge_indices"]["wall_start_index"]] < hole_wall["fill"][0]["bounds"][wall["edge_indices"]["wall_start_index"]] < \
                     wall["fill"][j]["bounds"][wall["edge_indices"]["wall_end_index"]]:
                 start = j
@@ -359,8 +315,6 @@ def wall_insert(wall, hole_wall):
     right_wall = copy.deepcopy(wall["fill"][end])
     left_wall["bounds"][wall["edge_indices"]["wall_end_index"]] = hole_wall["fill"][0]["bounds"][wall["edge_indices"]["wall_start_index"]]
     right_wall["bounds"][wall["edge_indices"]["wall_start_index"]] = hole_wall["fill"][0]["bounds"][wall["edge_indices"]["wall_end_index"]]
-    if wall["id"] == "rect51_outer_top":
-        print("yay")
     if start != end:
         wall["fill"][start] = left_wall
         wall["fill"][end] = right_wall
@@ -369,14 +323,6 @@ def wall_insert(wall, hole_wall):
         wall["fill"] = wall["fill"][:(start)] + [left_wall] + hole_wall["fill"] + [right_wall] + wall[
             "fill"][end + 1:]
     return wall
-
-def polygon_from_bounds(bounds):
-    return box(
-        bounds["x1"],
-        bounds["y1"],
-        bounds["x2"],
-        bounds["y2"],
-    )
 
 def split_wall_around_black_fills(wall):
     if wall["type"] == "base":
@@ -390,7 +336,7 @@ def split_wall_around_black_fills(wall):
 
     b = wall["bounds"]
 
-    if b["height"] > b["width"]:
+    if b["width"] > b["length"]:
         start_key = "y1"
         end_key = "y2"
     else:
@@ -415,8 +361,8 @@ def split_wall_around_black_fills(wall):
 
             new_wall["bounds"][start_key] = current_start
             new_wall["bounds"][end_key] = black_start
-            new_wall["bounds"]["width"] = new_wall["bounds"]["x2"] - new_wall["bounds"]["x1"]
-            new_wall["bounds"]["height"] = new_wall["bounds"]["y2"] - new_wall["bounds"]["y1"]
+            new_wall["bounds"]["length"] = new_wall["bounds"]["x2"] - new_wall["bounds"]["x1"]
+            new_wall["bounds"]["width"] = new_wall["bounds"]["y2"] - new_wall["bounds"]["y1"]
             new_wall["polygon"] = polygon_from_bounds(new_wall["bounds"])
 
             new_wall["fill"] = [
@@ -436,8 +382,8 @@ def split_wall_around_black_fills(wall):
 
         new_wall["bounds"][start_key] = current_start
         new_wall["bounds"][end_key] = b[end_key]
-        new_wall["bounds"]["width"] = new_wall["bounds"]["x2"] - new_wall["bounds"]["x1"]
-        new_wall["bounds"]["height"] = new_wall["bounds"]["y2"] - new_wall["bounds"]["y1"]
+        new_wall["bounds"]["length"] = new_wall["bounds"]["x2"] - new_wall["bounds"]["x1"]
+        new_wall["bounds"]["width"] = new_wall["bounds"]["y2"] - new_wall["bounds"]["y1"]
         new_wall["polygon"] = polygon_from_bounds(new_wall["bounds"])
 
         new_wall["fill"] = [
@@ -481,7 +427,7 @@ def modify_and_plot_walls_by_parent_id(
         right_wall = 1000
 
         for wall in parent_walls:
-            if wall["bounds"]["height"] > 5 and wall["bounds"]["width"] > 5:
+            if wall["bounds"]["width"] > 5 and wall["bounds"]["length"] > 5:
                 left_wall = wall["bounds"]["x1"]
                 right_wall = wall["bounds"]["x2"]
                 top_wall = wall["bounds"]["y1"]
@@ -513,7 +459,7 @@ def modify_and_plot_walls_by_parent_id(
 
             elif "inner" in wall["id"]:
 
-                if b["height"] > b["width"]:
+                if b["width"] > b["length"]:
                     if b["y1"] < top_wall + 5:
                         b["y1"] = b["y1"] -4+wall_width
                     else:
@@ -541,8 +487,8 @@ def modify_and_plot_walls_by_parent_id(
                     b["y1"] = b["y1"] + 2 - wall_width / 2
                     b["y2"] = b["y2"] - 2 + wall_width / 2
 
-            b["width"] = b["x2"] - b["x1"]
-            b["height"] = b["y2"] - b["y1"]
+            b["length"] = b["x2"] - b["x1"]
+            b["width"] = b["y2"] - b["y1"]
 
             if wall["fill"]:
                 old_minx = min(fill["bounds"]["x1"] for fill in wall["fill"])
@@ -558,15 +504,15 @@ def modify_and_plot_walls_by_parent_id(
 
                     # avoid divide-by-zero on very thin/degenerate fills
                     if old_w:
-                        new_x1 = b["x1"] + (fb["x1"] - old_minx) / old_w * b["width"]
-                        new_x2 = b["x1"] + (fb["x2"] - old_minx) / old_w * b["width"]
+                        new_x1 = b["x1"] + (fb["x1"] - old_minx) / old_w * b["length"]
+                        new_x2 = b["x1"] + (fb["x2"] - old_minx) / old_w * b["length"]
                     else:
                         new_x1 = b["x1"]
                         new_x2 = b["x2"]
 
                     if old_h:
-                        new_y1 = b["y1"] + (fb["y1"] - old_miny) / old_h * b["height"]
-                        new_y2 = b["y1"] + (fb["y2"] - old_miny) / old_h * b["height"]
+                        new_y1 = b["y1"] + (fb["y1"] - old_miny) / old_h * b["width"]
+                        new_y2 = b["y1"] + (fb["y2"] - old_miny) / old_h * b["width"]
                     else:
                         new_y1 = b["y1"]
                         new_y2 = b["y2"]
@@ -575,9 +521,9 @@ def modify_and_plot_walls_by_parent_id(
                     fb["x2"] = new_x2
                     fb["y1"] = new_y1
                     fb["y2"] = new_y2
-                    fb["width"] = fb["x2"] - fb["x1"]
-                    fb["height"] = fb["y2"] - fb["y1"]
-                    fb["polygon"] = bounds_poly_from_dict(fb)
+                    fb["length"] = fb["x2"] - fb["x1"]
+                    fb["width"] = fb["y2"] - fb["y1"]
+                    fb["polygon"] = polygon_from_bounds(fb)
 
         final_parent_walls = split_walls_around_black_fills(
             parent_walls
@@ -624,7 +570,6 @@ def modify_and_plot_walls_by_parent_id(
         plt.close()
 
     return final_walls_by_parent
-
 
 def modify_and_plot_wall_layers(
     wall_layers,
