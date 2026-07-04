@@ -489,6 +489,7 @@ def modify_and_plot_walls_by_parent_id(
 
             b["length"] = b["x2"] - b["x1"]
             b["width"] = b["y2"] - b["y1"]
+            wall["polygon"] = polygon_from_bounds(wall["bounds"])
 
             if wall["fill"]:
                 old_minx = min(fill["bounds"]["x1"] for fill in wall["fill"])
@@ -536,8 +537,8 @@ def modify_and_plot_walls_by_parent_id(
 
         for wall in final_parent_walls:
             if wall["type"] == "base":
-                plot_bounds_rect(
-                    wall["bounds"],
+                plot_polygon(
+                    wall["polygon"],
                     fill_color="#dddddd",
                     edge_color="black",
                     linewidth=1,
@@ -546,14 +547,13 @@ def modify_and_plot_walls_by_parent_id(
 
         for wall in final_parent_walls:
             if wall["type"] != "base":
-                for fill_part in wall.get("fill", []):
-                    plot_bounds_rect(
-                        fill_part["bounds"],
-                        fill_color=fill_part.get("color", "#00ff00"),
-                        edge_color="black",
-                        linewidth=2,
-                        alpha=0.5,
-                    )
+                plot_polygon(
+                    wall["polygon"],
+                    fill_color=wall["fill"][0].get("color", "#00ff00") if wall.get("fill") else "#00ff00",
+                    edge_color="black",
+                    linewidth=2,
+                    alpha=0.5,
+                )
 
         plt.title(f"{parent_id}\nwall_width={wall_width}")
         plt.axis("equal")

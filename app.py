@@ -11,8 +11,7 @@ from merging_path_and_rect import merge_wall_layers
 from creating_bottom_holes import generate_wall_graphs_timed
 from get_dict_from_csv import get_color_scheme
 
-
-board_game_name = "Eldritch_horror"
+board_game_name = "Arnak"
 
 SVG_FILE = Path(fr"D:\board_game_insert_code\{board_game_name}.svg")
 
@@ -24,42 +23,6 @@ def main():
     wall_thickness = 5
     laser_width = 0.075
     layers = load_svg_layers(SVG_FILE)
-
-    """render_grouped_layers(
-        grouped_layers,
-        OUT_DIR,
-    )"""
-    #grouped = group_objects_inside_layers_v3(layers, tolerance=0.5)
-
-    test_datax = [
-        {"x1": 0, "x2": 100, "y1": 0, "y2": 4, "z1": 4, "z2": 30, "shape": "rect"},
-        {"x1": 10, "x2": 20, "y1": 0, "y2": 4, "z1": 0, "z2": 4, "shape": "rect"},
-        {"x1": 40, "x2": 50, "y1": 0, "y2": 4, "z1": 15, "z2": 19, "shape": "rect"},
-        {"x1": 100, "x2": 120, "y1": 0, "y2": 4, "z1": 4, "z2": 15, "shape": "rect"},
-        {"x1": 120, "x2": 130, "y1": 0, "y2": 4, "z1": 4, "z2": 15, "shape": "semi"},
-        {"x1": 130, "x2": 150, "y1": 0, "y2": 4, "z1": 4, "z2": 15, "shape": "rect"},
-    ]
-
-    test_datay = [
-        {"y1": 0, "y2": 100, "x1": 0, "x2": 4, "z1": 4, "z2": 30, "shape": "rect"},
-        {"y1": 10, "y2": 20, "x1": 0, "x2": 4, "z1": 0, "z2": 4, "shape": "rect"},
-        {"y1": 40, "y2": 50, "x1": 0, "x2": 4, "z1": 15, "z2": 19, "shape": "rect"},
-        {"y1": 100, "y2": 120, "x1": 0, "x2": 4, "z1": 4, "z2": 15, "shape": "rect"},
-        {"y1": 120, "y2": 130, "x1": 0, "x2": 4, "z1": 4, "z2": 15, "shape": "semi"},
-        {"y1": 130, "y2": 150, "x1": 0, "x2": 4, "z1": 4, "z2": 15, "shape": "rect"},
-    ]
-
-    test = [test_datax,test_datay]
-
-    outputs = generate_wall_graphs_timed(
-        walls=test,
-        out_dir=WALL_DIR / "holes",
-        wall_width=4,
-        semi_steps_3d=10,
-        semi_steps_2d=64,
-    )
-
-    print(outputs)
 
     color_height_dict = get_color_scheme(CSV_FILE, board_game_name)
     grouped_layers = group_objects_inside_layers_v4(layers)
@@ -94,8 +57,8 @@ def main():
     )
 
     walls = []
-    for wall in walls_with_ridges["Layer 1"]["rect17"]:
-        walls.append(wall["3D_cuboids"])
+    for wall in walls_with_ridges["Layer 1"]["rect51"]:
+        walls.append(wall)
 
     outputs = generate_wall_graphs_timed(
         walls=walls,

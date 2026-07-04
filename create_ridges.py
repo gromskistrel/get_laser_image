@@ -1,7 +1,74 @@
 import matplotlib.pyplot as plt
 from pathlib import Path
-from shapely.geometry import box
 from matplotlib.patches import Rectangle
+from shapely.geometry import box
+
+from shapely.geometry import Polygon
+
+def remove_collinear_points(poly, tolerance=1e-9):
+    coords = list(poly.exterior.coords)
+
+    # remove duplicate closing point
+    if coords[0] == coords[-1]:
+        coords = coords[:-1]
+
+    # remove consecutive duplicate points
+    deduped = []
+    for pt in coords:
+        if not deduped or pt != deduped[-1]:
+            deduped.append(pt)
+
+    coords = deduped
+
+    if len(coords) < 3:
+        return poly
+
+    cleaned = []
+
+    for i in range(len(coords)):
+        prev_pt = coords[i - 1]
+        curr_pt = coords[i]
+        next_pt = coords[(i + 1) % len(coords)]
+
+        v1 = (curr_pt[0] - prev_pt[0], curr_pt[1] - prev_pt[1])
+        v2 = (next_pt[0] - curr_pt[0], next_pt[1] - curr_pt[1])
+
+        cross = v1[0] * v2[1] - v1[1] * v2[0]
+
+        if abs(cross) > tolerance:
+            cleaned.append(curr_pt)
+
+    # fallback: don't destroy the polygon
+    if len(cleaned) < 3:
+        return poly
+
+    cleaned.append(cleaned[0])
+
+    return Polygon(cleaned)
+
+def polygon_to_rectangles(poly, min_area=1e-9):
+    xs = sorted(set(x for x, y in poly.exterior.coords))
+    ys = sorted(set(y for x, y in poly.exterior.coords))
+
+    rects = []
+
+    for x1, x2 in zip(xs, xs[1:]):
+        for y1, y2 in zip(ys, ys[1:]):
+            cell = box(x1, y1, x2, y2)
+
+            if poly.contains(cell.centroid):
+                inter = poly.intersection(cell)
+
+                if not inter.is_empty and inter.area > min_area:
+                    rects.append({
+                        "shape": "rect",
+                        "x1": x1,
+                        "x2": x2,
+                        "y1": y1,
+                        "y2": y2,
+                    })
+
+    return rects
 
 
 def plot_bounds_rect(bounds, fill_color, edge_color="black", linewidth=1, alpha=0.4):
@@ -97,8 +164,8 @@ def plot_wall_with_fill_parts(
 
     if isinstance(fill, list):
         if not fill:
-            plot_bounds_rect(
-                wall["bounds"],
+            plot_polygon(
+                wall["polygon"],
                 fill_color="#cccccc",
                 edge_color=edge_color,
                 linewidth=linewidth,
@@ -107,8 +174,10 @@ def plot_wall_with_fill_parts(
             return
 
         for fill_part in fill:
-            plot_bounds_rect(
-                fill_part["bounds"],
+            fill_poly = polygon_from_any_bounds(fill_part["bounds"])
+
+            plot_polygon(
+                fill_poly,
                 fill_color=fill_part.get("color"),
                 edge_color=edge_color,
                 linewidth=linewidth,
@@ -117,8 +186,8 @@ def plot_wall_with_fill_parts(
 
         return
 
-    plot_bounds_rect(
-        wall["bounds"],
+    plot_polygon(
+        wall["polygon"],
         fill_color=fill,
         edge_color=edge_color,
         linewidth=linewidth,
@@ -140,6 +209,11 @@ def plot_ridges(walls):
                 solid_capstyle="round",
             )
 
+def polygon_from_any_bounds(bounds):
+    if "polygon" in bounds:
+        return bounds["polygon"]
+
+    return bounds_poly_from_dict(bounds)
 
 def plot_single_polygon_debug(key, polygon, out_dir):
     out_dir = Path(out_dir)
@@ -149,14 +223,20 @@ def plot_single_polygon_debug(key, polygon, out_dir):
 
     for rectangle in polygon:
         if rectangle["id"].endswith("_base"):
-            continue
-
-        plot_wall_with_fill_parts(
-            rectangle,
-            edge_color="black",
-            linewidth=1,
-            alpha=0.4,
-        )
+            plot_polygon(
+                rectangle["polygon"],
+                fill_color=rectangle["fill"][0].get("color") if rectangle.get("fill") else "#cccccc",
+                edge_color="black",
+                linewidth=1,
+                alpha=0.4,
+            )
+        else:
+            plot_wall_with_fill_parts(
+                rectangle,
+                edge_color="black",
+                linewidth=1,
+                alpha=0.4,
+            )
 
         for ridge in rectangle.get("ridge_places", []):
             plot_bounds_rect(
@@ -270,9 +350,9 @@ def split_fills_at(wall, value1, value2, axis, tolerance=1e-3):
 
     return True
 
-def ridge_places(start, end, laser_width):
+def ridge_places(start, end):
     perfect = 7.5
-    interval_number = 1
+    interval_number = 2
     prev = 1000
     while True:
         interval_length = (end-start)/interval_number
@@ -280,14 +360,17 @@ def ridge_places(start, end, laser_width):
             interval_length = prev
             break
         else:
-            interval_number = interval_number+2
+            if interval_number %2 == 0:
+                interval_number = interval_number+1
+            else:
+                interval_number = interval_number+2
             prev = interval_length
-    ridge_places = [laser_width+start]
+    ridge_places = [start]
     for i in range(interval_number-2):
         if i%2 == 0:
-            ridge_places.append((i+1)*interval_length + start - laser_width)
+            ridge_places.append((i+1)*interval_length + start)
         else:
-            ridge_places.append((i+1)*interval_length + start + laser_width)
+            ridge_places.append((i+1)*interval_length + start)
 
     print(f"ridge_start_difference = {ridge_places[0]-start}")
     print(f"ridge_end_difference = {end-ridge_places[-1]}")
@@ -298,7 +381,7 @@ def ridge_places(start, end, laser_width):
     return ridge_places
 
 def add_connection_info_to_walls(wall_layers, color_height_dict, out_dir=None, render=False, wall_width=3, laser_width = 0.075):
-    tolerance = 1
+    tolerance = 1e-3
     returned = {}
 
     for layer_name, walls in wall_layers.items():
@@ -368,7 +451,7 @@ def add_connection_info_to_walls(wall_layers, color_height_dict, out_dir=None, r
 
                                     new_polygon["fill"] = ordered[0]["fill"] + [fill_middle] + ordered[1]["fill"]
                                     new_polygon["bounds"]["x2"] = ordered[1]["bounds"]["x2"]
-                                    new_polygon["bounds"]["lengthh"] = new_polygon["bounds"]["x2"] - new_polygon["bounds"][
+                                    new_polygon["bounds"]["length"] = new_polygon["bounds"]["x2"] - new_polygon["bounds"][
                                         "x1"]
                                     new_polygon["bounds"]["polygon"] = bounds_poly_from_dict(new_polygon["bounds"])
 
@@ -482,18 +565,26 @@ def add_connection_info_to_walls(wall_layers, color_height_dict, out_dir=None, r
                                     },
                                     "height": height,
                                 })
+
+                                rect_width = rectangle["bounds"]["width"]
+                                for no_ridge_place in rectangle["no_ridge_places"]:
+                                    rect_width -= no_ridge_place["y2"] - no_ridge_place["y1"]
+
+                                other_rect_length = other_rectangle["bounds"]["length"]
+                                for no_ridge_place in other_rectangle["no_ridge_places"]:
+                                    other_rect_length -= no_ridge_place["x2"] - no_ridge_place["x1"]
+
                                 if "outer" in rectangle["id"] and "outer" in other_rectangle["id"]:
-                                    if rectangle["bounds"]["width"] < 4 and other_rectangle["bounds"]["length"] < (wall_width+4):
-                                        rectangle["no_ridge_places"].append({"x1": b["x1"], "x2": b["x2"], "y1": b["y1"], "y2": b["y2"]})
+                                    if rect_width > 40 and other_rect_length > 40:
+                                        rectangle["no_ridge_places"].append({"x1": b["x1"], "x2": b["x2"], "y1": b["y1"], "y2": b["y1"] + wall_width})
+                                        other_rectangle["no_ridge_places"].append({"x1": b["x1"], "x2": b["x1"] + wall_width + 4, "y1": ob["y1"], "y2": ob["y2"]})
+                                    elif rectangle["bounds"]["width"] < 4 and other_rectangle["bounds"]["length"] < (wall_width+4):
                                         other_rectangle["no_ridge_places"].append({"x1": ob["x1"], "x2": ob["x2"], "y1": ob["y1"], "y2": ob["y2"]})
-                                    elif rectangle["bounds"]["width"] < 4:
-                                        other_rectangle[]
-                                        rectangle["no_ridge_places"].append({"x1": b["x1"], "x2": b["x2"], "y1": b["y1"], "y2": b["y2"]})
-                                    elif other_rectangle["bounds"]["length"] < (wall_width+4):
-                                        other_rectangle["no_ridge_places"].append({"x1": ob["x1"], "x2": ob["x2"], "y1": ob["y1"], "y2": ob["y2"]})
+                                    elif rectangle["bounds"]["width"] < 4 or rect_width < other_rect_length:
+                                        other_rectangle["no_ridge_places"].append({"x1": ob["x1"], "x2": ob["x1"]+wall_width+4, "y1": ob["y1"], "y2": ob["y2"]})
                                     else:
-                                        rectangle["no_ridge_places"].append({"x1": b["x1"], "x2": b["x2"], "y1": b["y1"], "y2": b["y2"]+4})
-                                        other_rectangle["no_ridge_places"].append({"x1": b["x1"], "x2": b["x2"]+4, "y1": ob["y1"], "y2": ob["y2"]})
+                                        other_rectangle["no_ridge_places"].append({"x1": ob["x1"], "x2": ob["x1"]+wall_width, "y1": ob["y1"], "y2": ob["y2"]})
+                                        rectangle["no_ridge_places"].append({"x1": b["x1"], "x2": b["x2"], "y1": b["y1"], "y2": b["y1"]+4})
 
 
                             if (
@@ -522,8 +613,26 @@ def add_connection_info_to_walls(wall_layers, color_height_dict, out_dir=None, r
                                     },
                                     "height": height,
                                 })
+
+                                rect_width = rectangle["bounds"]["width"]
+                                for no_ridge_place in rectangle["no_ridge_places"]:
+                                    rect_width -= no_ridge_place["y2"] - no_ridge_place["y1"]
+
+                                other_rect_length = other_rectangle["bounds"]["length"]
+                                for no_ridge_place in other_rectangle["no_ridge_places"]:
+                                    other_rect_length -= no_ridge_place["x2"] - no_ridge_place["x1"]
+
                                 if "outer" in rectangle["id"] and "outer" in other_rectangle["id"]:
-                                    other_rectangle["no_ridge_places"].append({"x1": b["x1"], "x2": b["x2"], "y1": ob["y1"], "y2": ob["y2"]})
+                                    if rect_width > 40 and other_rect_length > 40:
+                                        rectangle["no_ridge_places"].append({"x1": b["x1"], "x2": b["x2"], "y1": b["y2"] - 4, "y2": b["y2"]})
+                                        other_rectangle["no_ridge_places"].append({"x1": b["x2"] - wall_width - 4, "x2": b["x2"], "y1": ob["y1"], "y2": ob["y2"]})
+                                    elif rectangle["bounds"]["width"] < 4 and other_rectangle["bounds"]["length"] < (wall_width + 4):
+                                        other_rectangle["no_ridge_places"].append({"x1": ob["x1"], "x2": ob["x2"], "y1": ob["y1"], "y2": ob["y2"]})
+                                    elif rectangle["bounds"]["width"] < 4 or rect_width < other_rect_length:
+                                        other_rectangle["no_ridge_places"].append({"x1": ob["x2"]-wall_width-4, "x2": ob["x2"], "y1": ob["y1"],"y2": ob["y2"]})
+                                    else:
+                                        other_rectangle["no_ridge_places"].append({"x1": ob["x2"]-wall_width, "x2": ob["x2"], "y1": ob["y1"],"y2": ob["y2"]})
+                                        rectangle["no_ridge_places"].append({"x1": b["x1"], "x2": b["x2"], "y1": b["y2"]-4, "y2": b["y2"]})
 
                     else:
                         if (
@@ -556,9 +665,26 @@ def add_connection_info_to_walls(wall_layers, color_height_dict, out_dir=None, r
                                     },
                                     "height": height,
                                 })
-                                if "outer" in rectangle["id"] and "outer" in other_rectangle["id"]:
-                                    other_rectangle["no_ridge_places"].append({"x1": ob["x1"], "x2": ob["x2"], "y1": b["y1"], "y2": b["y2"]})
 
+                                rect_length = rectangle["bounds"]["length"]
+                                for no_ridge_place in rectangle["no_ridge_places"]:
+                                    rect_length -= no_ridge_place["x2"] - no_ridge_place["x1"]
+
+                                other_rect_width = other_rectangle["bounds"]["width"]
+                                for no_ridge_place in other_rectangle["no_ridge_places"]:
+                                    other_rect_width -= no_ridge_place["y2"] - no_ridge_place["y1"]
+
+                                if "outer" in rectangle["id"] and "outer" in other_rectangle["id"]:
+                                    if rect_length > 40 and other_rect_width > 40:
+                                        rectangle["no_ridge_places"].append({"x1": b["x1"], "x2": b["x1"] + wall_width, "y1": b["y1"], "y2": b["y2"]})
+                                        other_rectangle["no_ridge_places"].append({"x1": ob["x1"], "x2": ob["x2"], "y1": ob["y2"] - wall_width - 4, "y2": ob["y2"]})
+                                    elif rectangle["bounds"]["length"] < 4 and other_rectangle["bounds"]["width"] < (wall_width+4):
+                                        other_rectangle["no_ridge_places"].append({"x1": ob["x1"], "x2": ob["x2"], "y1": ob["y1"], "y2": ob["y2"]})
+                                    elif rectangle["bounds"]["length"] < 4 or rect_length < other_rect_width:
+                                        other_rectangle["no_ridge_places"].append({"x1": ob["x1"], "x2": ob["x2"], "y1": ob["y2"]-wall_width-4, "y2": ob["y2"]})
+                                    else:
+                                        rectangle["no_ridge_places"].append({"x1": b["x1"], "x2": b["x1"]+4, "y1": b["y1"], "y2": b["y2"]})
+                                        other_rectangle["no_ridge_places"].append({"x1": ob["x1"], "x2": ob["x2"], "y1": ob["y2"]-wall_width, "y2": ob["y2"]})
 
                             if (
                                 b["x2"] > ob["x1"] - tolerance
@@ -567,34 +693,52 @@ def add_connection_info_to_walls(wall_layers, color_height_dict, out_dir=None, r
                                 if "outer" in other_rectangle["id"] and len(other_rectangle["fill"]) > 1:
                                     split_fills_at(other_rectangle, b["y1"], b["y2"], "y")
 
-                                    height = min(color_height_dict[get_wall_color_at_point(rectangle, b["x2"], "x")], color_height_dict[get_wall_color_at_point(rectangle, (b["y1"]+b["y2"])/2, "y")])
+                                height = min(color_height_dict[get_wall_color_at_point(rectangle, b["x2"], "x")], color_height_dict[get_wall_color_at_point(rectangle, (b["y1"]+b["y2"])/2, "y")])
 
-                                    rectangle["ridges"].append({
-                                        "direction": "head_right",
-                                        "location": {
-                                            "start": [b["x2"], b["y1"]],
-                                            "end": [b["x2"], b["y2"]],
-                                        },
-                                        "height": height,
-                                    })
+                                rectangle["ridges"].append({
+                                    "direction": "head_right",
+                                    "location": {
+                                        "start": [b["x2"], b["y1"]],
+                                        "end": [b["x2"], b["y2"]],
+                                    },
+                                    "height": height,
+                                })
 
-                                    other_rectangle["ridges"].append({
-                                        "direction": "side_left",
-                                        "location": {
-                                            "start": [ob["x1"], b["y1"]],
-                                            "end": [ob["x1"], b["y2"]],
-                                        },
-                                        "height": height,
-                                    })
-                                    if "outer" in rectangle["id"] and "outer" in other_rectangle["id"]:
-                                        other_rectangle["no_ridge_places"].append({"x1": ob["x1"], "x2": ob["x2"], "y1": b["y1"], "y2": b["y2"]})
+                                other_rectangle["ridges"].append({
+                                    "direction": "side_left",
+                                    "location": {
+                                        "start": [ob["x1"], b["y1"]],
+                                        "end": [ob["x1"], b["y2"]],
+                                    },
+                                    "height": height,
+                                })
+
+                                rect_length = rectangle["bounds"]["length"]
+                                for no_ridge_place in rectangle["no_ridge_places"]:
+                                    rect_length -= no_ridge_place["x2"] - no_ridge_place["x1"]
+
+                                other_rect_width = other_rectangle["bounds"]["width"]
+                                for no_ridge_place in other_rectangle["no_ridge_places"]:
+                                    other_rect_width -= no_ridge_place["y2"] - no_ridge_place["y1"]
+
+                                if "outer" in rectangle["id"] and "outer" in other_rectangle["id"]:
+                                    if rect_length > 40 and other_rect_width > 40:
+                                        rectangle["no_ridge_places"].append({"x1": b["x2"] - 4, "x2": b["x2"], "y1": b["y1"], "y2": b["y2"]})
+                                        other_rectangle["no_ridge_places"].append({"x1": ob["x1"], "x2": ob["x2"], "y1": ob["y1"], "y2": ob["y1"] + wall_width + 4})
+                                    elif rectangle["bounds"]["length"] < 4 and other_rectangle["bounds"]["width"] < (wall_width + 4):
+                                        other_rectangle["no_ridge_places"].append({"x1": ob["x1"], "x2": ob["x2"], "y1": ob["y1"], "y2": ob["y2"]})
+                                    elif rectangle["bounds"]["length"] < 4 or rect_length < other_rect_width:
+                                        other_rectangle["no_ridge_places"].append({"x1": ob["x1"], "x2": ob["x2"], "y1": ob["y1"], "y2": ob["y1"]+wall_width+4})
+                                    else:
+                                        rectangle["no_ridge_places"].append({"x1": b["x2"]-4, "x2": b["x2"], "y1": b["y1"], "y2": b["y2"]})
+                                        other_rectangle["no_ridge_places"].append( {"x1": ob["x1"], "x2": ob["x2"], "y1": ob["y1"], "y2": ob["y1"]+ wall_width})
 
         for key, polygons in walls.items():
             for rectangle in polygons:
                 b = rectangle["bounds"]
                 if "outer" in rectangle["id"]:
                     if rectangle["no_ridge_places"] != []:
-                        rectangle.setdefault("ridge_places", []).append(b)
+                        rectangle.setdefault("ridge_places", []).append(b.copy())
                         for ridge in rectangle["no_ridge_places"]:
                             if rectangle["direction"] == "horizontal":
                                 if b["x1"]-tolerance <= ridge["x1"] <= b["x1"] + tolerance:
@@ -607,7 +751,7 @@ def add_connection_info_to_walls(wall_layers, color_height_dict, out_dir=None, r
                                 elif b["y2"] - tolerance <= ridge["y2"] <= b["y2"] + tolerance:
                                     rectangle["ridge_places"][0]["y2"] = ridge["y1"]
                     else:
-                        rectangle.setdefault("ridge_places", []).append(b)
+                        rectangle.setdefault("ridge_places", []).append(b.copy())
 
 
 
@@ -625,15 +769,13 @@ def add_connection_info_to_walls(wall_layers, color_height_dict, out_dir=None, r
             for rectangle in rectangles:
                 rectangle["3D_cuboids"] = []
             for rectangle in rectangles:
-                if rectangle["id"] == 'rect17_outer_top' or rectangle["id"] == 'rect37_outer_top' :
-                    print("yay")
                 if "outer" in rectangle["id"]:
                     if rectangle["direction"] == "horizontal":
-                        rectangle["bottom_ridge_places"] = ridge_places(rectangle["ridge_places"][0]["x1"], rectangle["ridge_places"][0]["x2"], laser_width)
+                        rectangle["bottom_ridge_places"] = ridge_places(rectangle["ridge_places"][0]["x1"], rectangle["ridge_places"][0]["x2"])
                     else:
-                        rectangle["bottom_ridge_places"] = ridge_places(rectangle["ridge_places"][0]["y1"], rectangle["ridge_places"][0]["y2"], laser_width)
+                        rectangle["bottom_ridge_places"] = ridge_places(rectangle["ridge_places"][0]["y1"], rectangle["ridge_places"][0]["y2"])
                 for ridge in rectangle["ridges"]:
-                    ridge["ridge_places"] = ridge_places(4, ridge["height"], laser_width)
+                    ridge["ridge_places"] = ridge_places(wall_width, ridge["height"])
                 for fill in rectangle["fill"]:
 
                     color_height_dict["#552200"] = 0
@@ -642,39 +784,46 @@ def add_connection_info_to_walls(wall_layers, color_height_dict, out_dir=None, r
                         print(color_height_dict[fill["color"]])
                         fill["bounds"]["height"] = color_height_dict[fill["color"]]
                 if "base" in rectangle["id"]:
-                    rectangle["3D_cuboids"].append({"x1": rectangle["bounds"]["x1"], "x2": rectangle["bounds"]["x2"], "y1": rectangle["bounds"]["y1"], "y2": rectangle["bounds"]["y2"], "z1": 0, "z2": wall_width, "shape": "rect"})
+                    if "path" not in rectangle["id"]:
+                        rectangle["3D_cuboids"].append({"x1": rectangle["bounds"]["x1"], "x2": rectangle["bounds"]["x2"], "y1": rectangle["bounds"]["y1"], "y2": rectangle["bounds"]["y2"], "z1": 0, "z2": wall_width, "shape": "rect", "hole": 0})
+                    else:
+                        simple_poly = remove_collinear_points(rectangle["polygon"])
+                        subrects = polygon_to_rectangles(simple_poly)
+                        for subrect in subrects:
+                            rectangle["3D_cuboids"].append({"x1": subrect["x1"], "x2": subrect["x2"], "y1": subrect["y1"], "y2": subrect["y2"], "z1": 0, "z2": wall_width, "shape": "rect", "hole": 0})
                 if "base" not in rectangle["id"]:
-                    if rectangle["bounds"]["width"] == wall_width:
+                    if wall_width + tolerance >rectangle["bounds"]["width"] > wall_width - tolerance:
                         for fill in rectangle["fill"]:
-                            rectangle["3D_cuboids"].append({"x1":fill["bounds"]["x1"], "x2": fill["bounds"]["x2"], "y1": fill["bounds"]["y1"], "y2": fill["bounds"]["y2"], "z1": wall_width, "z2": fill["bounds"]["height"], "shape": "rect"})
+                            if fill["color"] == 0:
+                            rectangle["3D_cuboids"].append({"x1":fill["bounds"]["x1"], "x2": fill["bounds"]["x2"], "y1": fill["bounds"]["y1"], "y2": fill["bounds"]["y2"], "z1": wall_width, "z2": fill["bounds"]["height"], "shape": "rect", "hole": 0})
                         for bottom_ridge in rectangle.get("bottom_ridge_places", []):
-                            rectangle["3D_cuboids"].append({"x1": bottom_ridge[0], "x2": bottom_ridge[1], "y1":rectangle["bounds"]["y1"], "y2":rectangle["bounds"]["y2"], "z1": 0, "z2": wall_width, "shape": "rect"})
+                            rectangle["3D_cuboids"].append({"x1": bottom_ridge[0]+laser_width, "x2": bottom_ridge[1]-laser_width, "y1":rectangle["bounds"]["y1"], "y2":rectangle["bounds"]["y2"], "z1": 0, "z2": wall_width, "shape": "rect", "hole": 0})
                             for rect2 in rectangles:
                                 if "base" in rect2["id"]:
-                                    rect2["3D_cuboids"].append({"x1": bottom_ridge[0], "x2": bottom_ridge[1], "y1":rectangle["bounds"]["y1"], "y2":rectangle["bounds"]["y2"], "z1": wall_width, "z2": 0, "shape": "rect"})
+                                    rect2["3D_cuboids"].append({"x1": bottom_ridge[0], "x2": bottom_ridge[1], "y1":rectangle["bounds"]["y1"], "y2":rectangle["bounds"]["y2"], "z1": wall_width, "z2": 0, "shape": "rect", "hole": 1})
                         for ridge in rectangle["ridges"]:
                             for ridge_place in ridge["ridge_places"]:
                                 if ridge["direction"] == 'head_right':
-                                    rectangle["3D_cuboids"].append({"x1": rectangle["bounds"]["x2"], "x2": rectangle["bounds"]["x2"] + wall_width, "y1": rectangle["bounds"]["y1"], "y2": rectangle["bounds"]["y2"], "z1": ridge_place[0], "z2": ridge_place[1], "shape": "rect"})
+                                    rectangle["3D_cuboids"].append({"x1": rectangle["bounds"]["x2"], "x2": rectangle["bounds"]["x2"] + wall_width, "y1": rectangle["bounds"]["y1"], "y2": rectangle["bounds"]["y2"], "z1": ridge_place[0]+laser_width, "z2": ridge_place[1]-laser_width, "shape": "rect", "hole": 0})
                                 if ridge["direction"] == 'head_left':
-                                    rectangle["3D_cuboids"].append({"x1": rectangle["bounds"]["x1"]-wall_width, "x2": rectangle["bounds"]["x1"], "y1":rectangle["bounds"]["y1"], "y2":rectangle["bounds"]["y2"], "z1": ridge_place[0], "z2": ridge_place[1], "shape": "rect"})
+                                    rectangle["3D_cuboids"].append({"x1": rectangle["bounds"]["x1"]-wall_width, "x2": rectangle["bounds"]["x1"], "y1":rectangle["bounds"]["y1"], "y2":rectangle["bounds"]["y2"], "z1": ridge_place[0]+laser_width, "z2": ridge_place[1]-laser_width, "shape": "rect", "hole": 0})
                                 if ridge["direction"] == 'side_top' or ridge["direction"] == 'side_bottom':
-                                    rectangle["3D_cuboids"].append({"x1": ridge["location"]["start"][0], "x2": ridge["location"]["end"][0], "y1":rectangle["bounds"]["y1"], "y2":rectangle["bounds"]["y2"], "z1": ridge_place[0], "z2": ridge_place[1], "shape": "rect"})
+                                    rectangle["3D_cuboids"].append({"x1": ridge["location"]["start"][0], "x2": ridge["location"]["end"][0], "y1":rectangle["bounds"]["y1"], "y2":rectangle["bounds"]["y2"], "z1": ridge_place[0], "z2": ridge_place[1], "shape": "rect", "hole": 1})
                     else:
                         for fill in rectangle["fill"]:
-                            rectangle["3D_cuboids"].append({"x1":fill["bounds"]["x1"], "x2": fill["bounds"]["x2"], "y1": fill["bounds"]["y1"], "y2": fill["bounds"]["y2"], "z1": wall_width, "z2": fill["bounds"]["height"], "shape": "rect"})
+                            rectangle["3D_cuboids"].append({"x1":fill["bounds"]["x1"], "x2": fill["bounds"]["x2"], "y1": fill["bounds"]["y1"], "y2": fill["bounds"]["y2"], "z1": wall_width, "z2": fill["bounds"]["height"], "shape": "rect", "hole": 0})
                         for bottom_ridge in rectangle.get("bottom_ridge_places", []):
-                            rectangle["3D_cuboids"].append({"x1": rectangle["bounds"]["x1"], "x2": rectangle["bounds"]["x2"], "y1": bottom_ridge[0], "y2": bottom_ridge[1], "z1": 0, "z2": wall_width, "shape": "rect"})
+                            rectangle["3D_cuboids"].append({"x1": rectangle["bounds"]["x1"], "x2": rectangle["bounds"]["x2"], "y1": bottom_ridge[0]+laser_width, "y2": bottom_ridge[1]-laser_width, "z1": 0, "z2": wall_width, "shape": "rect", "hole": 0})
                             for rect2 in rectangles:
                                 if "base" in rect2["id"]:
-                                    rect2["3D_cuboids"].append({"x1": rectangle["bounds"]["x1"], "x2": rectangle["bounds"]["x2"], "y1": bottom_ridge[0], "y2": bottom_ridge[1], "z1": wall_width, "z2": 0, "shape": "rect"})
+                                    rect2["3D_cuboids"].append({"x1": rectangle["bounds"]["x1"], "x2": rectangle["bounds"]["x2"], "y1": bottom_ridge[0], "y2": bottom_ridge[1], "z1": wall_width, "z2": 0, "shape": "rect", "hole": 1})
                         for ridge in rectangle["ridges"]:
                             for ridge_place in ridge["ridge_places"]:
                                 if ridge["direction"] == 'head_top':
-                                    rectangle["3D_cuboids"].append({"x1": rectangle["bounds"]["x1"], "x2": rectangle["bounds"]["x2"], "y1": rectangle["bounds"]["y1"]+wall_width, "y2": rectangle["bounds"]["y1"], "z1": ridge_place[0], "z2": ridge_place[1], "shape": "rect"})
+                                    rectangle["3D_cuboids"].append({"x1": rectangle["bounds"]["x1"], "x2": rectangle["bounds"]["x2"], "y1": rectangle["bounds"]["y1"]+wall_width, "y2": rectangle["bounds"]["y1"], "z1": ridge_place[0]+laser_width, "z2": ridge_place[1]-laser_width, "shape": "rect", "hole": 0})
                                 if ridge["direction"] == 'head_bottom':
-                                    rectangle["3D_cuboids"].append({"x1": rectangle["bounds"]["x1"], "x2": rectangle["bounds"]["x2"], "y1":rectangle["bounds"]["y2"], "y2":rectangle["bounds"]["y2"]+wall_width, "z1": ridge_place[0], "z2": ridge_place[1], "shape": "rect"})
+                                    rectangle["3D_cuboids"].append({"x1": rectangle["bounds"]["x1"], "x2": rectangle["bounds"]["x2"], "y1":rectangle["bounds"]["y2"], "y2":rectangle["bounds"]["y2"]+wall_width, "z1": ridge_place[0]+laser_width, "z2": ridge_place[1]-laser_width, "shape": "rect", "hole": 0})
                                 if ridge["direction"] == 'side_right' or ridge["direction"] == 'side_left':
-                                    rectangle["3D_cuboids"].append({"x1": rectangle["bounds"]["x1"], "x2": rectangle["bounds"]["x2"], "y1":ridge["location"]["start"][1], "y2":ridge["location"]["end"][1], "z1": ridge_place[0], "z2": ridge_place[1], "shape": "rect"})
+                                    rectangle["3D_cuboids"].append({"x1": rectangle["bounds"]["x1"], "x2": rectangle["bounds"]["x2"], "y1":ridge["location"]["start"][1], "y2":ridge["location"]["end"][1], "z1": ridge_place[0], "z2": ridge_place[1], "shape": "rect", "hole": 1})
 
     return returned

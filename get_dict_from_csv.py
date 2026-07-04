@@ -18,7 +18,7 @@ def get_color_scheme(filename, game_name):
                     break
 
                 hex_color = str(df.iloc[j, 0]).strip().lower()
-                value = int(df.iloc[j, 1])
+                value = float(df.iloc[j, 1])
 
                 colors[hex_color] = value
                 j += 1
