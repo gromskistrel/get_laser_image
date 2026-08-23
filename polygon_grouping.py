@@ -100,7 +100,7 @@ def merge_outer_objects(outers):
     return merged_outer
 
 
-def group_objects_inside_layers_v4(layers, tolerance=0.5):
+def group_objects_inside_layers_v4(layers, laser_width, tolerance=0.5):
     grouped_layers = {}
 
     for layer_name, objects in layers.items():
@@ -242,6 +242,14 @@ def group_objects_inside_layers_v4(layers, tolerance=0.5):
             }
 
         grouped_layers[layer_name] = groups
+
+    """for layer_key, layer in grouped_layers.items():
+        for object in layer:
+            start_x = object["outer"]["bounds"][0]
+            start_y = object["outer"]["bounds"][1]
+            end_x = object["outer"]["bounds"][2] + laser_width
+            end_y = object["outer"]["bounds"][3] + laser_width
+            for inner_object in object["inside"]:"""
 
     return grouped_layers
 
