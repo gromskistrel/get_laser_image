@@ -100,7 +100,7 @@ def merge_outer_objects(outers):
     return merged_outer
 
 
-def group_objects_inside_layers_v4(layers, laser_width, tolerance=0.5):
+def group_objects_inside_layers_v4(layers):
     grouped_layers = {}
 
     for layer_name, objects in layers.items():
@@ -122,8 +122,6 @@ def group_objects_inside_layers_v4(layers, laser_width, tolerance=0.5):
 
                 inner_coords = bounds_dict_from_poly(inner["polygon"])
                 outer_coords = bounds_dict_from_poly(outer["polygon"])
-                if inner["id"] == "rect79" and outer["id"] == "rect22":
-                    print("yay")
                 if (inner_coords["x1"]>=outer_coords["x1"]+0.1 and inner_coords["x2"]<=outer_coords["x2"]-0.1) or (inner_coords["y1"]+0.1>=outer_coords["y1"] and inner_coords["y2"]-0.1<=outer_coords["y2"]):
 
                     outer_poly = outer["polygon"]

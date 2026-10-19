@@ -2,6 +2,7 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 from matplotlib.patches import Rectangle
 from shapely.geometry import box
+from itertools import combinations
 
 from shapely.geometry import Polygon
 
@@ -46,12 +47,15 @@ def remove_collinear_points(poly, tolerance=1e-9):
 
     return Polygon(cleaned)
 
+from shapely.geometry import box
+
 def polygon_to_rectangles(poly, min_area=1e-9):
     xs = sorted(set(x for x, y in poly.exterior.coords))
     ys = sorted(set(y for x, y in poly.exterior.coords))
 
     rects = []
 
+    # step 1: grid cells (same as before)
     for x1, x2 in zip(xs, xs[1:]):
         for y1, y2 in zip(ys, ys[1:]):
             cell = box(x1, y1, x2, y2)
@@ -67,6 +71,27 @@ def polygon_to_rectangles(poly, min_area=1e-9):
                         "y1": y1,
                         "y2": y2,
                     })
+
+    # step 2: merge pairs that form a bigger rectangle
+    area = lambda r: (r["x2"] - r["x1"]) * (r["y2"] - r["y1"])
+
+    merged = True
+    while merged:
+        merged = False
+        for a, b in combinations(rects, 2):
+            big = {
+                "shape": "rect",
+                "x1": min(a["x1"], b["x1"]),
+                "x2": max(a["x2"], b["x2"]),
+                "y1": min(a["y1"], b["y1"]),
+                "y2": max(a["y2"], b["y2"]),
+            }
+            if abs(area(big) - area(a) - area(b)) < 1e-9:
+                rects.remove(a)
+                rects.remove(b)
+                rects.append(big)
+                merged = True
+                break
 
     return rects
 
@@ -308,6 +333,7 @@ def split_fills_at(wall, value1, value2, axis, tolerance=1e-3):
     idx1 = None
     idx2 = None
 
+    # gets in which fill part value1 and value2 are
     for i, fill in enumerate(wall["fill"]):
         bounds = fill["bounds"]
 
@@ -325,7 +351,7 @@ def split_fills_at(wall, value1, value2, axis, tolerance=1e-3):
 
         if start - tolerance <= value2 <= end + tolerance:
             idx2 = i
-
+    # makes the part of the wall where ridges will be, have the same fill (so not split)
     if idx1 != idx2:
         if axis == "x":
             if wall["bounds"]["x1"] - tolerance < value1 < wall["bounds"]["x1"] + tolerance:
@@ -357,6 +383,7 @@ def ridge_places(start, end):
     perfect = 7.5
     interval_number = 2
     prev = 1000
+    # gets the best number of ridges based on their length
     while True:
         interval_length = (end-start)/interval_number
         if abs(perfect-interval_length) > abs(perfect-prev):
@@ -369,14 +396,13 @@ def ridge_places(start, end):
                 interval_number = interval_number+2
             prev = interval_length
     ridge_places = [start]
+    # gets all ridge places
     for i in range(interval_number-2):
-        if i%2 == 0:
-            ridge_places.append((i+1)*interval_length + start)
-        else:
             ridge_places.append((i+1)*interval_length + start)
 
     print(f"ridge_start_difference = {ridge_places[0]-start}")
     print(f"ridge_end_difference = {end-ridge_places[-1]}")
+    # splits ridge places into pairs of 2's
     ridge_places = [
         ridge_places[i:i + 2]
         for i in range(0, len(ridge_places), 2)
@@ -438,21 +464,22 @@ def rebuild_from_fills(item):
 
     item["bounds"], item["polygon"] = get_bounds_from_fill(fills)
 
-def add_connection_info_to_walls(wall_layers, color_height_dict, out_dir=None, render=False, wall_width=3, laser_width = 0.075):
+def add_connection_info_to_walls(wall_layers, color_height_dict, out_dir=None, render=False, wall_width=3):
     tolerance = 1e-3
     returned = {}
 
     for layer_name, walls in wall_layers.items():
-        print(layer_name)
 
         returned[layer_name] = {}
 
+        #file name for out
         layer_out_dir = None
         if render and out_dir is not None:
             layer_out_dir = Path(out_dir) / layer_name
 
-        # Used for getting middle walls (when walls are from each side)
+        # Used for getting middle walls (when walls are from each side) so overlapping vertical and horizontal walls in the middle
         for key, polygons in walls.items():
+            # gets direction of wall
             for rectangle in polygons:
                 if rectangle["bounds"]["length"] == wall_width:
                     rectangle["direction"] = "vertical"
@@ -480,15 +507,15 @@ def add_connection_info_to_walls(wall_layers, color_height_dict, out_dir=None, r
 
                         if polygons[i]["direction"] == "horizontal":
                             if (
-                                    polygons[j]["bounds"]["y1"] + 0.1 > polygons[i]["bounds"]["y1"] >
-                                    polygons[j]["bounds"]["y1"] - 0.1
-                                    and polygons[j]["bounds"]["y2"] + 0.1 > polygons[i]["bounds"]["y2"] >
-                                    polygons[j]["bounds"]["y2"] - 0.1
+                                    polygons[j]["bounds"]["y1"] + tolerance > polygons[i]["bounds"]["y1"] >
+                                    polygons[j]["bounds"]["y1"] - tolerance
+                                    and polygons[j]["bounds"]["y2"] + tolerance > polygons[i]["bounds"]["y2"] >
+                                    polygons[j]["bounds"]["y2"] - tolerance
                             ):
                                 ordered = [polygons[i], polygons[j]] if polygons[i]["bounds"]["x1"] < \
                                                                         polygons[j]["bounds"]["x1"] else [polygons[j],
                                                                                                           polygons[i]]
-                                if ordered[1]["bounds"]["x1"]-ordered[0]["bounds"]["x2"] < wall_width+0.1:
+                                if ordered[1]["bounds"]["x1"]-ordered[0]["bounds"]["x2"] < wall_width+tolerance:
 
                                     new_polygon = ordered[0].copy()
                                     new_polygon["bounds"] = ordered[0]["bounds"].copy()
@@ -594,18 +621,23 @@ def add_connection_info_to_walls(wall_layers, color_height_dict, out_dir=None, r
                     ob = other_rectangle["bounds"]
 
                     if rectangle["direction"] == "vertical":
+                        # horizontal alignment
                         if (
                             b["x1"] > ob["x1"] - tolerance
                             and b["x2"] < ob["x2"] + tolerance
                         ):
+                            # vertically on top
                             if (
                                 b["y1"] > ob["y1"] - tolerance
                                 and b["y1"] < ob["y2"] + tolerance
                             ):
+                                # Synchronises the fill of the parts of the rectangles where ridges will be (so the edge is not split into 3mm of 1 height and 1mm of another height, so ridges go smoothly)
                                 if "outer" in other_rectangle["id"] and len(other_rectangle["fill"]) > 1:
                                     split_fills_at(other_rectangle, b["x1"], b["x2"], "x")
+                                # At the part of the ridge gets the minimum height.
                                 height = min(color_height_dict[get_wall_color_at_point(rectangle, b["y1"], "y")], color_height_dict[get_wall_color_at_point(other_rectangle, (b["x1"]+b["x2"])/2, "x")])
 
+                                # creates a dict for where and what type of ridges there should be
                                 rectangle["ridges"].append({
                                     "direction": "head_top",
                                     "location": {
@@ -624,6 +656,7 @@ def add_connection_info_to_walls(wall_layers, color_height_dict, out_dir=None, r
                                     "height": height,
                                 })
 
+                                # gets what the left space of no_ridges is left
                                 rect_width = rectangle["bounds"]["width"]
                                 for no_ridge_place in rectangle["no_ridge_places"]:
                                     rect_width -= no_ridge_place["y2"] - no_ridge_place["y1"]
@@ -632,6 +665,8 @@ def add_connection_info_to_walls(wall_layers, color_height_dict, out_dir=None, r
                                 for no_ridge_place in other_rectangle["no_ridge_places"]:
                                     other_rect_length -= no_ridge_place["x2"] - no_ridge_place["x1"]
 
+                                # calculates where there will be no ridges depending on how much space is left for ridges on which part
+                                #TODO should there be rect_width and other_rect_length instead of bounds?
                                 if "outer" in rectangle["id"] and "outer" in other_rectangle["id"]:
                                     if rect_width > 40 and other_rect_length > 40:
                                         rectangle["no_ridge_places"].append({"x1": b["x1"], "x2": b["x2"], "y1": b["y1"], "y2": b["y1"] + wall_width})
@@ -671,8 +706,6 @@ def add_connection_info_to_walls(wall_layers, color_height_dict, out_dir=None, r
                                     },
                                     "height": height,
                                 })
-                                if "rect64_rect63_merged" in rectangle["id"]:
-                                    print("yay")
                                 rect_width = rectangle["bounds"]["width"]
                                 for no_ridge_place in rectangle["no_ridge_places"]:
                                     rect_width -= no_ridge_place["y2"] - no_ridge_place["y1"]
@@ -791,6 +824,7 @@ def add_connection_info_to_walls(wall_layers, color_height_dict, out_dir=None, r
                                         rectangle["no_ridge_places"].append({"x1": b["x2"]-4, "x2": b["x2"], "y1": b["y1"], "y2": b["y2"]})
                                         other_rectangle["no_ridge_places"].append( {"x1": ob["x1"], "x2": ob["x2"], "y1": ob["y1"], "y2": ob["y1"]+ wall_width})
 
+        # makes ridge places not be in the corners ever
         for key, polygons in walls.items():
             for rectangle in polygons:
                 b = rectangle["bounds"]
@@ -813,12 +847,14 @@ def add_connection_info_to_walls(wall_layers, color_height_dict, out_dir=None, r
 
 
             for polygon in polygons:
-                if polygon["orientation"] == "vertical":
+                if polygon["direction"] == "vertical":
                     match_handled = False
-                    for fill_index, fill in enumerate(polygon["fill"][:]):
+                    for fill_index, fill in enumerate(polygon["fill"]):
+                        # runs only if fill is the length of wall_width (4cm originally) (maybe so it removes base or bottom ridges?)
                         if fill["bounds"]["width"] != wall_width:
                             continue
                         for ridge in polygon["ridges"]:
+                            # ridge is not the whole fill bounds
                             same_vertical_span = (ridge["location"]["start"][1] == fill["bounds"]["y1"] and ridge["location"]["end"][1] == fill["bounds"]["y2"])
                             if not same_vertical_span:
                                 continue
@@ -872,7 +908,9 @@ def add_connection_info_to_walls(wall_layers, color_height_dict, out_dir=None, r
                         if match_handled:
                             break
 
-                if polygon["orientation"] == "horizontal":
+                # If the one of the walls (at the edge), has a certain height only for wall width and then it lowers/highers, changes the orientation of the ridges,
+                # So the ridges can attach. Otherwise in the short part of the wall you would get floating pieces.
+                if polygon["direction"] == "horizontal":
                     match_handled = False
                     for fill_index, fill in enumerate(polygon["fill"][:]):
                         if fill["bounds"]["length"] != wall_width:
@@ -933,8 +971,6 @@ def add_connection_info_to_walls(wall_layers, color_height_dict, out_dir=None, r
             for polygon in polygons:
                 for fill in polygon["fill"]:
                     fill["bounds"]["polygon"] = polygon_from_any_bounds(fill["bounds"])
-                if "rect22_outer_left" in polygon["id"]:
-                    print("yay")
 
             if render and layer_out_dir is not None:
                 plot_single_polygon_debug(
@@ -950,34 +986,44 @@ def add_connection_info_to_walls(wall_layers, color_height_dict, out_dir=None, r
             for rectangle in rectangles:
                 rectangle["3D_cuboids"] = []
             for rectangle in rectangles:
-                if "rect33_rect88_merged_base_outer_top_split_2" in rectangle["id"]:
-                    print("yay")
                 if "outer" in rectangle["id"]:
+                    # gets bottom ridges
                     if rectangle["direction"] == "horizontal":
                         rectangle["bottom_ridge_places"] = ridge_places(rectangle["ridge_places"][0]["x1"], rectangle["ridge_places"][0]["x2"])
                     else:
                         rectangle["bottom_ridge_places"] = ridge_places(rectangle["ridge_places"][0]["y1"], rectangle["ridge_places"][0]["y2"])
+                # gets vertical ridge places
                 for ridge in rectangle["ridges"]:
                     ridge["ridge_places"] = ridge_places(wall_width, ridge["height"])
                 for fill in rectangle["fill"]:
                     color_height_dict["#552200"] = 15
                     if rectangle["type"] != "base":
                         fill["bounds"]["height"] = color_height_dict[fill["color"]]
+                # gets the 3D cuboid for simple rectangle basis, or split a complex shape into simple rectangles
                 if rectangle["type"] == "base":
                     if "path" not in rectangle["id"]:
-                        rectangle["3D_cuboids"].append({"x1": rectangle["bounds"]["x1"], "x2": rectangle["bounds"]["x2"], "y1": rectangle["bounds"]["y1"], "y2": rectangle["bounds"]["y2"], "z1": 0, "z2": wall_width, "shape": "rect", "hole": 0, "bend": None})
+                        rectangle["3D_cuboids"].append({"x1": rectangle["bounds"]["x1"], "x2": rectangle["bounds"]["x2"], "y1": rectangle["bounds"]["y1"], "y2": rectangle["bounds"]["y2"], "z1": 0, "z2": wall_width, "shape": "rect", "hole": 0, "bend": None, "main": True})
                     else:
                         simple_poly = remove_collinear_points(rectangle["polygon"])
                         subrects = polygon_to_rectangles(simple_poly)
                         for subrect in subrects:
-                            rectangle["3D_cuboids"].append({"x1": subrect["x1"], "x2": subrect["x2"], "y1": subrect["y1"], "y2": subrect["y2"], "z1": 0, "z2": wall_width, "shape": "rect", "hole": 0, "bend": None})
+                            rectangle["3D_cuboids"].append({"x1": subrect["x1"], "x2": subrect["x2"], "y1": subrect["y1"], "y2": subrect["y2"], "z1": 0, "z2": wall_width, "shape": "rect", "hole": 0, "bend": None, "main": True})
                 if rectangle["type"] != "base":
-                    if rectangle["orientation"] == "horizontal":
+                    if rectangle["direction"] == "horizontal":
                         for i in range(len(rectangle["fill"])):
                             bend = []
                             ridge_edges = {"x1":-1000000, "x2":1000000, "y1": -1000000, "y2": 1000000}
+                            # if brown, gets the highest wall of the neighbours
                             if rectangle["fill"][i]["color"] == "#552200":
                                 height = 0
+                                if rectangle["fill"][i - 1]["color"] != "#552200" and rectangle["fill"][i+1]["color"] != "#552200":
+                                    if i+1 < len(rectangle["fill"]) and i-1 > 0:
+                                        height = max(color_height_dict[rectangle["fill"][i-1]["color"]], color_height_dict[rectangle["fill"][i + 1]["color"]], height)
+                                    elif i+1 < len(rectangle["fill"]):
+                                        height = max(color_height_dict[rectangle["fill"][i + 1]["color"]], height)
+                                    else:
+                                        height = max(color_height_dict[rectangle["fill"][i - 1]["color"]], height)
+                                """
                                 for j in range(1, i-1):
                                     if rectangle["fill"][i-j]["color"] != "#552200":
                                         height = max(color_height_dict[rectangle["fill"][i-j]["color"]], height)
@@ -985,7 +1031,8 @@ def add_connection_info_to_walls(wall_layers, color_height_dict, out_dir=None, r
                                 for j in range(i+1, len(rectangle["fill"])):
                                     if rectangle["fill"][j]["color"] != "#552200":
                                         height = max(color_height_dict[rectangle["fill"][i - j]["color"]], height)
-                                        break
+                                        break"""
+                                # applies a bend to it
                                 bend = bend_append(bend, "left", "up", max((rectangle["fill"][i]["bounds"]["x2"]-rectangle["fill"][i]["bounds"]["x1"])/2, 20))
                                 bend = bend_append(bend, "right", "up", max((rectangle["fill"][i]["bounds"]["x2"] -rectangle["fill"][i]["bounds"]["x1"]) / 2,20))
                                 if height > 20:
@@ -993,7 +1040,7 @@ def add_connection_info_to_walls(wall_layers, color_height_dict, out_dir=None, r
                                 else:
                                     color_height_dict["#552200"] = height
 
-
+                            # changes ridge_edges locations at most from start to end
                             for ridge in rectangle["ridges"]:
                                 if "side" in ridge["direction"]:
                                     if ridge["location"]["end"][0]<=rectangle["fill"][i]["bounds"]["x2"] and ridge["location"]["start"][0]>=rectangle["fill"][i]["bounds"]["x1"]:
@@ -1002,42 +1049,44 @@ def add_connection_info_to_walls(wall_layers, color_height_dict, out_dir=None, r
                                         if ridge["location"]["end"][0] < ridge_edges["x2"]:
                                             ridge_edges["x2"] = ridge["location"]["end"][0]
 
-                            right_ridge_length = 5
-                            left_ridge_length = 5
+                            right_bend_length = 5
+                            left_bend_length = 5
+                            #I think this should be bend length not ridge length
+                            # In general shortens bend if it's next to a wall
                             for ridge in rectangle["ridges"]:
                                 if i == len(rectangle["fill"]) - 1:
                                     if "head_right" in ridge["direction"]:
-                                        right_ridge_length = 0
+                                        right_bend_length = 0
                                     elif rectangle["bounds"]["x2"] - wall_width - tolerance < ridge["location"]["end"][0]:
-                                        right_ridge_length = rectangle["bounds"]["x2"] - ridge["location"]["end"][0] - tolerance
+                                        right_bend_length = rectangle["bounds"]["x2"] - ridge["location"]["end"][0] - tolerance
                                     elif ridge["location"]["start"][0] - tolerance < rectangle["bounds"]["x2"] < ridge["location"]["end"][0]:
-                                        right_ridge_length = 0
+                                        right_bend_length = 0
                                 if i == 0:
                                     if "head_left" in ridge["direction"]:
-                                        left_ridge_length = 0
+                                        left_bend_length = 0
                                     elif rectangle["bounds"]["x1"] + wall_width + tolerance > ridge["location"]["start"][0]:
-                                        left_ridge_length = ridge["location"]["start"][0] - rectangle["bounds"]["x1"] - tolerance
+                                        left_bend_length = ridge["location"]["start"][0] - rectangle["bounds"]["x1"] - tolerance
                                     elif ridge["location"]["start"][0] - tolerance < rectangle["bounds"]["x2"] < ridge["location"]["end"][0]:
-                                        left_ridge_length = 0
+                                        left_bend_length = 0
                                 if len(rectangle["fill"]) != 1:
                                     if i == 0:
-                                        right_ridge_length = 0
+                                        right_bend_length = 0
                                     if i == len(rectangle["fill"]) - 1:
-                                        left_ridge_length = 0
+                                        left_bend_length = 0
 
-                            bend = bend_append(bend, "right", "down", min(right_ridge_length, 5))
-                            bend = bend_append(bend, "left", "down",  min(left_ridge_length, 5))
+                            bend = bend_append(bend, "right", "down", min(right_bend_length, 5))
+                            bend = bend_append(bend, "left", "down",  min(left_bend_length, 5))
 
+                            # gets how long the bend should be between 2 heights (taking account of ridges from inner walls)
                             if i < len(rectangle["fill"])-1:
                                 bend_length = 5
                                 for ridge in rectangle["ridges"]:
-                                    if rectangle["fill"][i]["bounds"]["x1"] + tolerance < ridge["location"]["start"][0] < rectangle["fill"][i]["bounds"]["x1"] + wall_width + tolerance:
+                                    if rectangle["fill"][i]["bounds"]["x1"] - tolerance < ridge["location"]["start"][0] < rectangle["fill"][i]["bounds"]["x1"] + wall_width + tolerance:
                                         bend_length = min(ridge["location"]["start"][0] - rectangle["fill"][i]["bounds"]["x1"],bend_length)
-                                    elif rectangle["fill"][i]["bounds"]["x1"] - wall_width + tolerance < \
-                                            ridge["location"]["start"][0] < rectangle["fill"][i]["bounds"]["x1"] + tolerance:
+                                    elif rectangle["fill"][i]["bounds"]["x1"] - wall_width - tolerance < ridge["location"]["start"][0] < rectangle["fill"][i]["bounds"]["x1"] + tolerance:
                                         bend_length = 0
                                 if color_height_dict[rectangle["fill"][i+1]["color"]]<color_height_dict[rectangle["fill"][i]["color"]] and rectangle["fill"][i]["color"] != "#552200":
-                                    bend = bend_append(bend, "right", "down", min(rectangle["fill"][i]["bounds"]["length"]/2, abs(ridge_edges["x2"]-rectangle["fill"][i]["bounds"]["x2"]), 5))
+                                    bend = bend_append(bend, "left", "down", min(rectangle["fill"][i]["bounds"]["length"]/2, abs(ridge_edges["x2"]-rectangle["fill"][i]["bounds"]["x2"]), bend_length))
 
 
                             if i>0:
@@ -1048,23 +1097,24 @@ def add_connection_info_to_walls(wall_layers, color_height_dict, out_dir=None, r
                                    if rectangle["fill"][i]["bounds"]["x2"] - tolerance < ridge["location"]["end"][0] < rectangle["fill"][i]["bounds"]["x2"] + wall_width - tolerance:
                                         bend_length = 0
                                 if color_height_dict[rectangle["fill"][i-1]["color"]]<color_height_dict[rectangle["fill"][i]["color"]] and rectangle["fill"][i]["color"] != "#552200":
-                                    bend_append(bend, "left", "down", min(rectangle["fill"][i]["bounds"]["length"]/2, abs(ridge_edges["x1"]-rectangle["fill"][i]["bounds"]["x1"]), 5))
+                                    bend_append(bend, "right", "down", min(rectangle["fill"][i]["bounds"]["length"]/2, abs(ridge_edges["x1"]-rectangle["fill"][i]["bounds"]["x1"]), bend_length))
 
-
-                            rectangle["3D_cuboids"].append({"x1": rectangle["fill"][i]["bounds"]["x1"], "x2": rectangle["fill"][i]["bounds"]["x2"], "y1": rectangle["fill"][i]["bounds"]["y1"], "y2": rectangle["fill"][i]["bounds"]["y2"], "z1": wall_width, "z2": rectangle["fill"][i]["bounds"]["height"], "shape": "rect", "hole": 0, "bend": bend})
+                        # fill 3D cuboids for each fill part
+                            rectangle["3D_cuboids"].append({"x1": rectangle["fill"][i]["bounds"]["x1"], "x2": rectangle["fill"][i]["bounds"]["x2"], "y1": rectangle["fill"][i]["bounds"]["y1"], "y2": rectangle["fill"][i]["bounds"]["y2"], "z1": wall_width, "z2": rectangle["fill"][i]["bounds"]["height"], "shape": "rect", "hole": 0, "bend": bend, "main": True})
+                        # get all the 3D cuboids for ridges
                         for bottom_ridge in rectangle.get("bottom_ridge_places", []):
-                            rectangle["3D_cuboids"].append({"x1": bottom_ridge[0]+laser_width, "x2": bottom_ridge[1] - laser_width, "y1":rectangle["bounds"]["y1"], "y2": rectangle["bounds"]["y2"], "z1": 0, "z2": wall_width, "shape": "rect", "hole": 0, "bend": None})
+                            rectangle["3D_cuboids"].append({"x1": bottom_ridge[0], "x2": bottom_ridge[1], "y1":rectangle["bounds"]["y1"], "y2": rectangle["bounds"]["y2"], "z1": 0, "z2": wall_width, "shape": "rect", "hole": 0, "bend": None, "main": False})
                             for rect2 in rectangles:
                                 if rect2["type"] == "base":
-                                    rect2["3D_cuboids"].append({"x1": bottom_ridge[0], "x2": bottom_ridge[1], "y1": rectangle["bounds"]["y1"], "y2":rectangle["bounds"]["y2"], "z1": wall_width, "z2": 0, "shape": "rect", "hole": 1, "bend": None})
+                                    rect2["3D_cuboids"].append({"x1": bottom_ridge[0], "x2": bottom_ridge[1], "y1": rectangle["bounds"]["y1"], "y2":rectangle["bounds"]["y2"], "z1": wall_width, "z2": 0, "shape": "rect", "hole": 1, "bend": None, "main": False})
                         for ridge in rectangle["ridges"]:
                             for ridge_place in ridge["ridge_places"]:
                                 if ridge["direction"] == 'head_right':
-                                    rectangle["3D_cuboids"].append({"x1": rectangle["bounds"]["x2"], "x2": rectangle["bounds"]["x2"] + wall_width, "y1": rectangle["bounds"]["y1"], "y2": rectangle["bounds"]["y2"], "z1": ridge_place[0]+laser_width, "z2": ridge_place[1]-laser_width, "shape": "rect", "hole": 0, "bend": None})
+                                    rectangle["3D_cuboids"].append({"x1": rectangle["bounds"]["x2"], "x2": rectangle["bounds"]["x2"] + wall_width, "y1": rectangle["bounds"]["y1"], "y2": rectangle["bounds"]["y2"], "z1": ridge_place[0], "z2": ridge_place[1], "shape": "rect", "hole": 0, "bend": None, "main": False})
                                 if ridge["direction"] == 'head_left':
-                                    rectangle["3D_cuboids"].append({"x1": rectangle["bounds"]["x1"]-wall_width, "x2": rectangle["bounds"]["x1"], "y1":rectangle["bounds"]["y1"], "y2":rectangle["bounds"]["y2"], "z1": ridge_place[0]+laser_width, "z2": ridge_place[1]-laser_width, "shape": "rect", "hole": 0, "bend": None})
+                                    rectangle["3D_cuboids"].append({"x1": rectangle["bounds"]["x1"]-wall_width, "x2": rectangle["bounds"]["x1"], "y1":rectangle["bounds"]["y1"], "y2":rectangle["bounds"]["y2"], "z1": ridge_place[0], "z2": ridge_place[1], "shape": "rect", "hole": 0, "bend": None, "main": False})
                                 if ridge["direction"] == 'side_top' or ridge["direction"] == 'side_bottom':
-                                    rectangle["3D_cuboids"].append({"x1": ridge["location"]["start"][0], "x2": ridge["location"]["end"][0], "y1":rectangle["bounds"]["y1"], "y2":rectangle["bounds"]["y2"], "z1": ridge_place[0], "z2": ridge_place[1], "shape": "rect", "hole": 1, "bend": None})
+                                    rectangle["3D_cuboids"].append({"x1": ridge["location"]["start"][0], "x2": ridge["location"]["end"][0], "y1":rectangle["bounds"]["y1"], "y2":rectangle["bounds"]["y2"], "z1": ridge_place[0], "z2": ridge_place[1], "shape": "rect", "hole": 1, "bend": None, "main": False})
                     else:
                         for i in range(len(rectangle["fill"])):
                             ridge_edges = {"x1": -1000000, "x2": 1000000, "y1": -1000000, "y2": 1000000}
@@ -1095,31 +1145,31 @@ def add_connection_info_to_walls(wall_layers, color_height_dict, out_dir=None, r
                                         if ridge["location"]["end"][1] < ridge_edges["y2"]:
                                             ridge_edges["y2"] = ridge["location"]["end"][1]
 
-                            top_ridge_length = 5
-                            bottom_ridge_length = 5
+                            top_bend_length = 5
+                            bottom_bend_length = 5
                             for ridge in rectangle["ridges"]:
                                 if i == len(rectangle["fill"])-1:
                                     if "head_bottom" in ridge["direction"]:
-                                        top_ridge_length = 0
+                                        top_bend_length = 0
                                     elif rectangle["bounds"]["y2"] - wall_width - tolerance < ridge["location"]["end"][1]:
-                                        top_ridge_length = rectangle["bounds"]["y2"]-ridge["location"]["end"][1]-tolerance
+                                        top_bend_length = rectangle["bounds"]["y2"]-ridge["location"]["end"][1]-tolerance
                                     elif ridge["location"]["start"][1]-tolerance<rectangle["bounds"]["y2"]<ridge["location"]["end"][1]:
-                                        top_ridge_length = 0
+                                        top_bend_length = 0
                                 if i == 0:
                                     if "head_top" in ridge["direction"]:
-                                        bottom_ridge_length = 0
+                                        bottom_bend_length = 0
                                     elif rectangle["bounds"]["y1"] + wall_width + tolerance > ridge["location"]["start"][1]:
-                                        bottom_ridge_length = ridge["location"]["start"][1]-rectangle["bounds"]["y1"]-tolerance
+                                        bottom_bend_length = ridge["location"]["start"][1]-rectangle["bounds"]["y1"]-tolerance
                                     elif ridge["location"]["start"][1]-tolerance<rectangle["bounds"]["y2"]<ridge["location"]["end"][1]:
-                                        bottom_ridge_length = 0
+                                        bottom_bend_length = 0
                                 if len(rectangle["fill"]) != 1:
                                     if i == 0:
-                                        top_ridge_length = 0
+                                        top_bend_length = 0
                                     if i == len(rectangle["fill"])-1:
-                                        bottom_ridge_length = 0
+                                        bottom_bend_length = 0
 
-                            bend_append(bend, "forward", "down", min(top_ridge_length, 5))
-                            bend_append(bend, "backward", "down", min(bottom_ridge_length, 5))
+                            bend_append(bend, "forward", "down", min(top_bend_length, 5))
+                            bend_append(bend, "backward", "down", min(bottom_bend_length, 5))
 
                             if i < len(rectangle["fill"]) - 1:
                                 bend_length = 5
@@ -1153,19 +1203,21 @@ def add_connection_info_to_walls(wall_layers, color_height_dict, out_dir=None, r
                                 "shape": "rect",
                                 "hole": 0,
                                 "bend": bend,
+                                "main": True
                             })
 
                         for bottom_ridge in rectangle.get("bottom_ridge_places", []):
                             rectangle["3D_cuboids"].append({
                                 "x1": rectangle["bounds"]["x1"],
                                 "x2": rectangle["bounds"]["x2"],
-                                "y1": bottom_ridge[0] + laser_width,
-                                "y2": bottom_ridge[1] - laser_width,
+                                "y1": bottom_ridge[0],
+                                "y2": bottom_ridge[1],
                                 "z1": 0,
                                 "z2": wall_width,
                                 "shape": "rect",
                                 "hole": 0,
                                 "bend": None,
+                                "main": False
                             })
 
                             for rect2 in rectangles:
@@ -1180,6 +1232,7 @@ def add_connection_info_to_walls(wall_layers, color_height_dict, out_dir=None, r
                                         "shape": "rect",
                                         "hole": 1,
                                         "bend": None,
+                                        "main": False
                                     })
 
                         for ridge in rectangle["ridges"]:
@@ -1190,11 +1243,12 @@ def add_connection_info_to_walls(wall_layers, color_height_dict, out_dir=None, r
                                         "x2": rectangle["bounds"]["x2"],
                                         "y1": rectangle["bounds"]["y1"] - wall_width,
                                         "y2": rectangle["bounds"]["y1"],
-                                        "z1": ridge_place[0] + laser_width,
-                                        "z2": ridge_place[1] - laser_width,
+                                        "z1": ridge_place[0],
+                                        "z2": ridge_place[1],
                                         "shape": "rect",
                                         "hole": 0,
                                         "bend": None,
+                                        "main": False
                                     })
 
                                 if ridge["direction"] == "head_bottom":
@@ -1203,11 +1257,12 @@ def add_connection_info_to_walls(wall_layers, color_height_dict, out_dir=None, r
                                         "x2": rectangle["bounds"]["x2"],
                                         "y1": rectangle["bounds"]["y2"],
                                         "y2": rectangle["bounds"]["y2"] + wall_width,
-                                        "z1": ridge_place[0] + laser_width,
-                                        "z2": ridge_place[1] - laser_width,
+                                        "z1": ridge_place[0],
+                                        "z2": ridge_place[1],
                                         "shape": "rect",
                                         "hole": 0,
                                         "bend": None,
+                                        "main": False
                                     })
 
                                 if ridge["direction"] == "side_right" or ridge["direction"] == "side_left":
@@ -1221,5 +1276,6 @@ def add_connection_info_to_walls(wall_layers, color_height_dict, out_dir=None, r
                                         "shape": "rect",
                                         "hole": 1,
                                         "bend": None,
+                                        "main": False
                                     })
     return returned

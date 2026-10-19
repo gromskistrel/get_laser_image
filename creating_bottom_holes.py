@@ -5,6 +5,7 @@ import numpy as np
 import pyvista as pv
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
+from matplotlib.ticker import MultipleLocator
 from shapely.geometry import Polygon, MultiPolygon, GeometryCollection
 from shapely.ops import unary_union
 
@@ -1188,6 +1189,15 @@ def plot_2d_projection(
             bounds["vertical_max"],
         )
 
+    # Grid every 5 units (labelled every 25), drawn above the shapes so it
+    # stays visible over both solids and holes.
+    for axis in (ax.xaxis, ax.yaxis):
+        axis.set_major_locator(MultipleLocator(25))
+        axis.set_minor_locator(MultipleLocator(5))
+    ax.set_axisbelow(False)
+    ax.grid(which="minor", color="black", alpha=0.25, linewidth=0.5)
+    ax.grid(which="major", color="black", alpha=0.6, linewidth=0.9)
+
     ax.set_xlabel(geometry["horizontal_axis"])
     ax.set_ylabel(geometry["vertical_axis"])
     ax.set_title(title)
@@ -1228,7 +1238,7 @@ def get_wall_name_and_cuboids(wall, index):
             or f"wall_{index}"
         )
         cuboids = wall.get("3D_cuboids", [])
-        orientation = wall.get("orientation")
+        orientation = wall.get("direction")
         return str(name), cuboids, orientation
 
     return f"wall_{index}", wall, None

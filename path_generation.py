@@ -373,6 +373,17 @@ def get_path_base(layers, wall_thickness):
                 next_i = (i + 1) % len(lines)
                 lines[i]["angle"] = turn_between(lines[i], lines[next_i])
 
+            '''increase_direction = {0: {"x": -laser_width/2, "y": -laser_width/2}, 1: {"x": laser_width/2, "y": -laser_width/2}, 2: {"x": laser_width/2, "y": laser_width/2}, 3: {"x": -laser_width/2, "y": laser_width/2}}
+            line_direction = 0
+            for i in range(len(lines)):
+                print("lines", lines[i]["angle"], lines[i-1]["angle"])
+                line_direction += (lines[i]["angle"] + lines[i-1]["angle"])/2
+                lines[i]["bounds"]["x2"] += increase_direction[line_direction % 4]["x"]
+                lines[i]["bounds"]["y2"] += increase_direction[line_direction % 4]["y"]
+                lines[(i+1)%len(lines)]["bounds"]["x1"] += increase_direction[line_direction % 4]["x"]
+                lines[(i+1)%len(lines)]["bounds"]["y1"] += increase_direction[line_direction % 4]["y"]
+                print(i, line_direction)'''
+
             for i in range(len(lines)):
                 if i == 0:
                     lines[i]["direction"] = 1

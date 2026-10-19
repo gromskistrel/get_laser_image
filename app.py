@@ -3,7 +3,7 @@ from pathlib import Path
 from data_receiver import load_svg_layers
 from polygon_grouping import group_objects_inside_layers, group_objects_inside_layers_v4
 from data_representation import render_grouped_layers
-from laser_width_correction import laser_correction
+from laser_width_correction import get_laser_width_correction
 from wall_generation import generate_and_render_walls
 from path_generation import get_path_base
 from get_touching_points import modify_and_plot_wall_layers
@@ -13,7 +13,7 @@ from creating_bottom_holes import generate_wall_graphs_timed
 from get_dict_from_csv import get_color_scheme
 from create_svg import objects_to_svg
 
-board_game_name = "Arnak"
+board_game_name = "Eclipse"
 
 SVG_FILE = Path(fr"D:\board_game_insert_code\{board_game_name}.svg")
 
@@ -23,14 +23,13 @@ PATH_DIR = SVG_FILE.parent / f"{board_game_name}_path_lines"
 CSV_FILE = Path(r"D:\board_game_insert_code\Color_scheme.csv")
 def main():
     wall_thickness = 5
-    laser_width = 0.075
+    laser_width = 4
     layers = load_svg_layers(SVG_FILE)
 
     # gets the data off the table for color schemers
     color_height_dict = get_color_scheme(CSV_FILE, board_game_name)
 
-    grouped_layers = group_objects_inside_layers_v4(layers, laser_width)
-    grouped_layers_correction = laser_correction(grouped_layers, laser_width)
+    grouped_layers = group_objects_inside_layers_v4(layers)
     path_walls = get_path_base(grouped_layers, wall_thickness=wall_thickness)
 
     rect_walls = generate_and_render_walls(
@@ -58,8 +57,9 @@ def main():
         out_dir=WALL_DIR / "debug_ridges_by_parent",
         render=True,
         wall_width=wall_thickness,
-        laser_width=laser_width
     )
+
+    walls_with_laser_correction = get_laser_width_correction(walls_with_ridges, laser_width, wall_thickness)
     """
     walls = []
 
@@ -75,7 +75,7 @@ def main():
     )
     """
     walls = []
-    for wall_group in walls_with_ridges["Layer 1"].values():
+    for wall_group in walls_with_laser_correction["Layer 1"].values():
         walls.extend(wall_group)
 
     outputs = generate_wall_graphs_timed(

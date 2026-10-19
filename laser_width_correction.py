@@ -1,153 +1,133 @@
-def simplify_space(space, white_spaces, original_wall_width, tolerance):
-    parents = []
-    children = []
 
-    left, top, right, bottom = space["bounds"]
-
-    for candidate in white_spaces:
-        if candidate["id"] == space["id"]:
-            continue
-
-        c_left, c_top, c_right, c_bottom = candidate["bounds"]
-
-        horizontal_overlap = (
-            max(left, c_left)
-            <= min(right, c_right) + tolerance
-        )
-
-        if not horizontal_overlap:
-            continue
-
-        # Candidate is below space
-        if abs(c_top - (bottom + original_wall_width)) <= tolerance:
-            children.append(candidate["id"])
-
-        # Candidate is above space
-        if abs(top - (c_bottom + original_wall_width)) <= tolerance:
-            parents.append(candidate["id"])
-
-    return {
-        "id": space["id"],
-        "polygon": space["polygon"],
-        "bounds": space["bounds"],
-        "parents": parents,
-        "children": children,
-    }
-
-
-def is_white(space):
-    return any(
-        fill.get("color", "").lower() == "#ffffff"
-        for fill in space.get("fill", [])
-    )
-
-
-def get_top_spaces(white_spaces, top_edge, original_wall_width, tolerance):
-    return [
-        space
-        for space in white_spaces
-        if abs(
-            space["bounds"][1] - (top_edge + original_wall_width)
-        ) <= tolerance
-    ]
-
-
-def get_next_spaces(current_step, white_spaces, original_wall_width, tolerance):
-    next_step = []
-
-    for current_space in current_step:
-        current_left = current_space["bounds"][0]
-        current_right = current_space["bounds"][2]
-        current_bottom = current_space["bounds"][3]
-
-        for candidate in white_spaces:
-            if candidate in current_step:
-                continue
-
-            candidate_left = candidate["bounds"][0]
-            candidate_top = candidate["bounds"][1]
-            candidate_right = candidate["bounds"][2]
-
-            correct_vertical_position = abs(
-                candidate_top - (current_bottom + original_wall_width)
-            ) <= tolerance
-
-            if not correct_vertical_position:
-                continue
-
-            horizontal_overlap = (
-                max(current_left, candidate_left)
-                <= min(current_right, candidate_right) + tolerance
-            )
-
-            if not horizontal_overlap:
-                continue
-
-            if candidate not in next_step:
-                next_step.append(candidate)
-
-    return next_step
-
-
-def build_levels(white_spaces, top_edge, original_wall_width, tolerance):
-    levels = []
-
-    current_step = get_top_spaces(
-        white_spaces,
-        top_edge,
-        original_wall_width,
-        tolerance
-    )
-
-    while current_step:
-        levels.append([
-            simplify_space(
-                space,
-                white_spaces,
-                original_wall_width,
-                tolerance
-            )
-            for space in current_step
-        ])
-
-        current_step = get_next_spaces(
-            current_step,
-            white_spaces,
-            original_wall_width,
-            tolerance
-        )
-
-    return levels
-
-
-def laser_correction(grouped_layers, laser_width):
-    original_wall_width = 4
+def get_laser_width_correction(wall_layers, laser_width, wall_width):
+    index = 0
     tolerance = 1e-3
-    result = {}
+    for layer_name, walls in wall_layers.items():
+        for key, polygons in walls.items():
+            for i in range(len(polygons)):
+                polygons[i]["index"] = index
+                index += 1
+                main_cuboids = []
+                for j in range(len(polygons[i]["3D_cuboids"])):
+                    x1, x2, y1, y2, z1, z2 = polygons[i]["3D_cuboids"][j]["x1"], polygons[i]["3D_cuboids"][j]["x2"], polygons[i]["3D_cuboids"][j]["y1"], polygons[i]["3D_cuboids"][j]["y2"], polygons[i]["3D_cuboids"][j]["z1"], polygons[i]["3D_cuboids"][j]["z2"]
+                    if x1>x2:
+                        polygons[i]["3D_cuboids"][j]["x1"] = x2
+                        polygons[i]["3D_cuboids"][j]["x2"] = x1
+                    if y1>y2:
+                        polygons[i]["3D_cuboids"][j]["y1"] = y2
+                        polygons[i]["3D_cuboids"][j]["y2"] = y1
+                    if z1 > z2:
+                        polygons[i]["3D_cuboids"][j]["z1"] = z2
+                        polygons[i]["3D_cuboids"][j]["z2"] = z1
+                initial = {"x1": polygons[i]['3D_cuboids'][0]["x1"], "x2": polygons[i]['3D_cuboids'][0]["x2"], "y1": polygons[i]['3D_cuboids'][0]["y1"], "y2": polygons[i]['3D_cuboids'][0]["y2"], "z1": polygons[i]['3D_cuboids'][0]["z1"], "z2": polygons[i]['3D_cuboids'][0]["z2"]}
+                difference = {"x1": 0, "x2": 0, "y1": 0, "y2": 0, "z1": 0, "z2": 0}
+                for cuboid in polygons[i]['3D_cuboids']:
+                    for key in difference.keys():
+                        difference[key] += cuboid[key]-initial[key]
+                    if cuboid["main"] is True:
+                        main_cuboids.append(cuboid)
+                if difference["x1"] < tolerance and difference["x2"] < tolerance:
+                    axis = ["y1", "y2", "z1", "z2"]
+                elif difference["y1"] < tolerance and difference["y2"] < tolerance:
+                    axis = ["x1", "x2", "z1", "z2"]
+                else:
+                    axis = ["x1", "x2", "y1", "y2"]
+                left = main_cuboids[0][axis[0]]
+                right = main_cuboids[0][axis[1]]
+                bottom = main_cuboids[0][axis[2]]
+                top = main_cuboids[0][axis[3]]
+                if len(main_cuboids) > 1:
+                    for k in range(len(main_cuboids)):
+                        if main_cuboids[k][axis[2]] <= bottom:
+                            bottom = main_cuboids[k][axis[2]]
+                        if main_cuboids[k][axis[3]] >= top:
+                            top = main_cuboids[k][axis[3]]
+                        if main_cuboids[k][axis[0]] <= left:
+                            left = main_cuboids[k][axis[0]]
+                        if main_cuboids[k][axis[1]] >= right:
+                            right = main_cuboids[k][axis[1]]
+                for j in range(len(polygons[i]['3D_cuboids'])):
+                    if polygons[i]["3D_cuboids"][j]["main"] is False:
+                        polygons[i]["3D_cuboids"][j]["contained_within"] = -1
+                        if len(main_cuboids) > 0:
+                            for index, main_cuboid in enumerate(main_cuboids):
+                                if (polygons[i]['3D_cuboids'][j][axis[0]] > main_cuboid[axis[0]]-tolerance
+                                    and polygons[i]['3D_cuboids'][j][axis[1]] < main_cuboid[axis[1]]+tolerance
+                                    and polygons[i]['3D_cuboids'][j][axis[2]] > main_cuboid[axis[2]]-tolerance
+                                    and polygons[i]['3D_cuboids'][j][axis[3]] < main_cuboid[axis[3]]+tolerance):
+                                        polygons[i]["3D_cuboids"][j]["contained_within"] = index
 
-    for layer_name, layer in grouped_layers.items():
-        result[layer_name] = {}
+                for j in range(len(polygons[i]['3D_cuboids'])):
+                    cuboid = polygons[i]["3D_cuboids"][j]
+                    if cuboid["main"] is False:
+                        if cuboid["hole"] == 1:
+                            # left go left
+                            if main_cuboids[cuboid["contained_within"]][axis[0]]-tolerance<cuboid[axis[0]]<main_cuboids[cuboid["contained_within"]][axis[0]]+tolerance:
+                                if cuboid[axis[3]] - cuboid[axis[2]] != wall_width:
+                                    polygons[i]["3D_cuboids"][j][axis[0]] -= laser_width/2
+                                    polygons[i]["3D_cuboids"][j][axis[1]] -= laser_width/2
+                            # right go right
+                            elif main_cuboids[cuboid["contained_within"]][axis[1]]-tolerance<cuboid[axis[1]]<main_cuboids[cuboid["contained_within"]][axis[1]]+tolerance:
+                                if cuboid[axis[3]] - cuboid[axis[2]] != wall_width:
+                                    polygons[i]["3D_cuboids"][j][axis[0]] += laser_width/2
+                                    polygons[i]["3D_cuboids"][j][axis[1]] += laser_width/2
+                            # top go top
+                            elif main_cuboids[cuboid["contained_within"]][axis[2]]-tolerance<cuboid[axis[2]]<main_cuboids[cuboid["contained_within"]][axis[2]]+tolerance:
+                                if cuboid[axis[1]]-cuboid[axis[0]] != wall_width:
+                                    polygons[i]["3D_cuboids"][j][axis[2]] -= laser_width/2
+                                    polygons[i]["3D_cuboids"][j][axis[3]] -= laser_width/2
+                            # bottom go bottom
+                            elif main_cuboids[cuboid["contained_within"]][axis[3]]-tolerance<cuboid[axis[3]]<main_cuboids[cuboid["contained_within"]][axis[3]]+tolerance:
+                                if cuboid[axis[1]] - cuboid[axis[0]] != wall_width:
+                                    polygons[i]["3D_cuboids"][j][axis[2]] += laser_width/2
+                                    polygons[i]["3D_cuboids"][j][axis[3]] += laser_width/2
 
-        for rectangle in layer:
-            outer = rectangle["outer"]
+                            if bottom - tolerance < cuboid[axis[2]] < bottom + tolerance:
+                                polygons[i]["3D_cuboids"][j][axis[2]] -= laser_width / 2
+                            if top - tolerance < cuboid[axis[3]] < top + tolerance:
+                                polygons[i]["3D_cuboids"][j][axis[3]] += laser_width / 2
+                            if left - tolerance < cuboid[axis[0]] < left + tolerance:
+                                polygons[i]["3D_cuboids"][j][axis[0]] -= laser_width / 2
+                            if right - tolerance < cuboid[axis[1]] < right + tolerance:
+                                polygons[i]["3D_cuboids"][j][axis[1]] += laser_width / 2
 
-            if outer["type"] != "rect":
-                continue
+                        else:
+                            if main_cuboids[cuboid["contained_within"]][axis[0]] - tolerance < cuboid[axis[1]] < main_cuboids[cuboid["contained_within"]][axis[0]] + tolerance:
+                                polygons[i]["3D_cuboids"][j][axis[0]] -= laser_width / 2
+                                polygons[i]["3D_cuboids"][j][axis[1]] -= laser_width / 2
+                            elif main_cuboids[cuboid["contained_within"]][axis[1]] - tolerance < cuboid[axis[0]] < main_cuboids[cuboid["contained_within"]][axis[1]] + tolerance:
+                                polygons[i]["3D_cuboids"][j][axis[0]] += laser_width / 2
+                                polygons[i]["3D_cuboids"][j][axis[1]] += laser_width / 2
+                            elif main_cuboids[cuboid["contained_within"]][axis[2]] - tolerance < cuboid[axis[3]] < main_cuboids[cuboid["contained_within"]][axis[2]] + tolerance:
+                                polygons[i]["3D_cuboids"][j][axis[2]] -= laser_width / 2
+                                polygons[i]["3D_cuboids"][j][axis[3]] -= laser_width / 2
+                            elif main_cuboids[cuboid["contained_within"]][axis[3]] - tolerance < cuboid[axis[2]] < main_cuboids[cuboid["contained_within"]][axis[3]] + tolerance:
+                                polygons[i]["3D_cuboids"][j][axis[2]] += laser_width / 2
+                                polygons[i]["3D_cuboids"][j][axis[3]] += laser_width / 2
 
-            white_spaces = [
-                space
-                for space in rectangle["inside"]
-                if is_white(space)
-            ]
+                            if bottom - tolerance < cuboid[axis[2]] < bottom + tolerance:
+                                polygons[i]["3D_cuboids"][j][axis[2]] -= laser_width / 2
+                            if top - tolerance < cuboid[axis[3]] < top + tolerance:
+                                polygons[i]["3D_cuboids"][j][axis[3]] += laser_width / 2
+                            if left - tolerance < cuboid[axis[0]] < left + tolerance:
+                                polygons[i]["3D_cuboids"][j][axis[0]] -= laser_width / 2
+                            if right - tolerance < cuboid[axis[1]] < right + tolerance:
+                                polygons[i]["3D_cuboids"][j][axis[1]] += laser_width / 2
 
-            levels = build_levels(
-                white_spaces,
-                outer["bounds"][1],
-                original_wall_width,
-                tolerance
-            )
+                for j in range(len(polygons[i]['3D_cuboids'])):
+                    cuboid = polygons[i]["3D_cuboids"][j]
+                    if cuboid["main"] is True:
+                        polygons[i]["3D_cuboids"][j][axis[0]] -= laser_width / 2
+                        polygons[i]["3D_cuboids"][j][axis[1]] += laser_width / 2
+                        polygons[i]["3D_cuboids"][j][axis[2]] -= laser_width / 2
+                        polygons[i]["3D_cuboids"][j][axis[3]] += laser_width / 2
+                print("yay")
+    return wall_layers
 
-            if levels:
-                result[layer_name][outer["id"]] = levels
 
-    return result
+
+
+
+
+
+
