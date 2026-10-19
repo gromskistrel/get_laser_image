@@ -92,15 +92,19 @@ def get_laser_width_correction(wall_layers, laser_width, wall_width):
                                 polygons[i]["3D_cuboids"][j][axis[1]] += laser_width / 2
 
                         else:
+                            # left go left
                             if main_cuboids[cuboid["contained_within"]][axis[0]] - tolerance < cuboid[axis[1]] < main_cuboids[cuboid["contained_within"]][axis[0]] + tolerance:
                                 polygons[i]["3D_cuboids"][j][axis[0]] -= laser_width / 2
                                 polygons[i]["3D_cuboids"][j][axis[1]] -= laser_width / 2
+                            # right go right
                             elif main_cuboids[cuboid["contained_within"]][axis[1]] - tolerance < cuboid[axis[0]] < main_cuboids[cuboid["contained_within"]][axis[1]] + tolerance:
                                 polygons[i]["3D_cuboids"][j][axis[0]] += laser_width / 2
                                 polygons[i]["3D_cuboids"][j][axis[1]] += laser_width / 2
+                            # top go top
                             elif main_cuboids[cuboid["contained_within"]][axis[2]] - tolerance < cuboid[axis[3]] < main_cuboids[cuboid["contained_within"]][axis[2]] + tolerance:
                                 polygons[i]["3D_cuboids"][j][axis[2]] -= laser_width / 2
                                 polygons[i]["3D_cuboids"][j][axis[3]] -= laser_width / 2
+                            # bottom go bottom
                             elif main_cuboids[cuboid["contained_within"]][axis[3]] - tolerance < cuboid[axis[2]] < main_cuboids[cuboid["contained_within"]][axis[3]] + tolerance:
                                 polygons[i]["3D_cuboids"][j][axis[2]] += laser_width / 2
                                 polygons[i]["3D_cuboids"][j][axis[3]] += laser_width / 2
