@@ -1,3 +1,6 @@
+from shapely.affinity import translate
+from shapely.geometry import Polygon, Point
+
 
 def get_laser_width_correction(wall_layers, laser_width, wall_width):
     index = 0
@@ -5,6 +8,17 @@ def get_laser_width_correction(wall_layers, laser_width, wall_width):
     for layer_name, walls in wall_layers.items():
         for key, polygons in walls.items():
             for i in range(len(polygons)):
+                if "black_holes" in polygons[i]:
+                    for j, hole in enumerate(polygons[i]["black_holes"]):
+                        if hole[1] == "right":
+                            polygons[i]["black_holes"][j] = [translate(hole[0], xoff=-laser_width/2), hole[1]]
+                        if hole[1] == "left":
+                            polygons[i]["black_holes"][j] = [translate(hole[0], xoff=laser_width / 2), hole[1]]
+                        if hole[1] == "up":
+                            polygons[i]["black_holes"][j] = [translate(hole[0], yoff=-laser_width / 2), hole[1]]
+                        if hole[1] == "down":
+                            polygons[i]["black_holes"][j] = [translate(hole[0], xoff=laser_width / 2), hole[1]]
+
                 polygons[i]["index"] = index
                 index += 1
                 main_cuboids = []
@@ -125,9 +139,45 @@ def get_laser_width_correction(wall_layers, laser_width, wall_width):
                         polygons[i]["3D_cuboids"][j][axis[1]] += laser_width / 2
                         polygons[i]["3D_cuboids"][j][axis[2]] -= laser_width / 2
                         polygons[i]["3D_cuboids"][j][axis[3]] += laser_width / 2
-                print("yay")
     return wall_layers
 
+
+def get_wall_numbering(wall_layers):
+    number = 1
+    size = 3
+    for layer_name, walls in wall_layers.items():
+        for key, polygons in walls.items():
+            for i, polygon in enumerate(polygons):
+                left_bottom_point = (0, 0)
+                if polygon["type"] == "base":
+                    for j in range(len(polygon['3D_cuboids'])-1):
+                        if polygon["3D_cuboids"][j]["y1"] == polygon["3D_cuboids"][j+1]["y1"] and polygon["3D_cuboids"][j]["y2"] == polygon["3D_cuboids"][j+1]["y2"]:
+                            left_bottom_point = ((polygon["3D_cuboids"][j]["x2"]+polygon["3D_cuboids"][j+1]["x1"])/2-size/2, (polygon["3D_cuboids"][j]["y1"]+polygon["3D_cuboids"][j]["y2"])/2-size/2)
+                            points = [Point(left_bottom_point[0], left_bottom_point[1]), Point(left_bottom_point[0], left_bottom_point[1]+size), Point(left_bottom_point[0]+size, left_bottom_point[1]), Point(left_bottom_point[0]+size, left_bottom_point[1]+size)]
+                            if "black_holes" not in polygons[i]:
+                                break
+                            else:
+                                contains = False
+                                for black_hole in polygons[i]["black_holes"]:
+                                    for point in points:
+                                        if black_hole[0].contains(point):
+                                            contains  = True
+                                            break
+                                    if contains == True:
+                                        break
+                            if contains == False:
+                                break
+                else:
+                    # same 2D plane as get_2d_projection: vertical -> YZ, horizontal -> XZ
+                    h1, h2 = ("y1", "y2") if polygon.get("direction") == "vertical" else ("x1", "x2")
+                    for j in range(len(polygon['3D_cuboids'])):
+                        cuboid = polygon["3D_cuboids"][j]
+                        if cuboid["hole"] == 0 and cuboid["main"] is True:
+                            left_bottom_point = ((cuboid[h2]+cuboid[h1])/2-size/2, (cuboid["z2"]+cuboid["z1"])/2-size/2)
+                polygons[i]["written_number"] = {"point": left_bottom_point, "number": number, "size": size}
+                number += 1
+
+    return wall_layers
 
 
 

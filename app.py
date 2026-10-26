@@ -3,7 +3,7 @@ from pathlib import Path
 from data_receiver import load_svg_layers
 from polygon_grouping import group_objects_inside_layers, group_objects_inside_layers_v4
 from data_representation import render_grouped_layers
-from laser_width_correction import get_laser_width_correction
+from laser_width_correction import get_laser_width_correction, get_wall_numbering
 from wall_generation import generate_and_render_walls
 from path_generation import get_path_base
 from get_touching_points import modify_and_plot_wall_layers
@@ -23,7 +23,7 @@ PATH_DIR = SVG_FILE.parent / f"{board_game_name}_path_lines"
 CSV_FILE = Path(r"D:\board_game_insert_code\Color_scheme.csv")
 def main():
     wall_thickness = 5
-    laser_width = 4
+    laser_width = 0.075
     layers = load_svg_layers(SVG_FILE)
 
     # gets the data off the table for color schemers
@@ -60,6 +60,8 @@ def main():
     )
 
     walls_with_laser_correction = get_laser_width_correction(walls_with_ridges, laser_width, wall_thickness)
+
+    wall_numbering = get_wall_numbering(walls_with_laser_correction)
     """
     walls = []
 

@@ -4,8 +4,10 @@ import matplotlib
 matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
-from shapely.geometry import box
+from shapely.geometry import box, Polygon
+from shapely.ops import unary_union
 import copy
+import numpy as np
 
 
 from matplotlib.patches import Rectangle
@@ -324,15 +326,37 @@ def wall_insert(wall, hole_wall):
             "fill"][end + 1:]
     return wall
 
-def split_wall_around_black_fills(wall):
+def split_wall_around_black_fills(wall, base_wall):
     if wall["type"] == "base":
-        return [wall]
+        return [wall], base_wall
 
     fill = wall.get("fill", [])
     black_fills = [f for f in fill if f.get("color") == "#000000"]
 
     if not black_fills:
-        return [wall]
+        return [wall], base_wall
+
+    if "outer" in wall["id"] and "top" in wall["id"]:
+        direction = "down"
+        orientation = "horizontal"
+    elif "outer" in wall["id"] and "bottom" in wall["id"]:
+        direction = "up"
+        orientation = "horizontal"
+    elif "outer" in wall["id"] and "left" in wall["id"]:
+        direction = "right"
+        orientation = "vertical"
+    else:
+        direction = "left"
+        orientation = "vertical"
+
+    append_black_fill = []
+    for bfill in black_fills:
+        append_black_fill.append({"bounds": bfill["bounds"], "direction": direction, "orientation": orientation})
+
+    if "black_holes" not in base_wall:
+        base_wall["black_holes"] = append_black_fill
+    else:
+        base_wall["black_holes"] += append_black_fill
 
     b = wall["bounds"]
 
@@ -395,15 +419,192 @@ def split_wall_around_black_fills(wall):
 
         pieces.append(new_wall)
 
-    return pieces
+    return pieces, base_wall
 
-def split_walls_around_black_fills(walls):
+def sector(center, rx, ry, start_deg, end_deg, n=64):
+    """Elliptical pie slice from start_deg to end_deg (CCW from +x, true angles)."""
+    cx, cy = center
+    if end_deg < start_deg:
+        end_deg += 360
+    phi = np.radians(np.linspace(start_deg, end_deg, n))
+    # distance from center to the ellipse edge at angle phi
+    r = rx * ry / np.sqrt((ry * np.cos(phi))**2 + (rx * np.sin(phi))**2)
+    x = cx + r * np.cos(phi)
+    y = cy + r * np.sin(phi)
+    return Polygon([(cx, cy)] + list(zip(x, y)))
+
+def split_walls_around_black_fills(walls, wall_width):
+
+    tolerance = 1e-3
     split_walls = []
+    base_index = 0
+    for i, wall in enumerate(walls):
+        if wall["type"] == "base":
+            base_index = i
 
     for wall in walls:
-        split_walls.extend(
-            split_wall_around_black_fills(wall)
-        )
+        wall_result, walls[base_index] = split_wall_around_black_fills(wall, walls[base_index])
+        split_walls.extend(wall_result)
+    # adding quarter circular holes into base if holes are next to each other in the corners
+    holes = []
+    if "black_holes" in split_walls[base_index]:
+        for i in range(len(split_walls[base_index]["black_holes"])):
+            for j in range(len(split_walls[base_index]["black_holes"])):
+                first_orientation = split_walls[base_index]["black_holes"][i]["orientation"]
+                second_orientation = split_walls[base_index]["black_holes"][j]["orientation"]
+                first_direction = split_walls[base_index]["black_holes"][i]["direction"]
+                second_direction = split_walls[base_index]["black_holes"][j]["direction"]
+
+                first_split = split_walls[base_index]["black_holes"][i]["bounds"]
+                second_split = split_walls[base_index]["black_holes"][j]["bounds"]
+                # useless if, but more descriptive
+                if first_orientation == 'vertical' and second_orientation == 'horizontal':
+                    radius = min(first_split["y2"]-first_split["y1"], second_split["x2"]-second_split["x1"])
+                    if first_direction == "right" and second_direction == "down":
+                        # left long, top short 1
+                        if first_split["y1"]-tolerance < second_split["y1"]<first_split["y1"] + tolerance and first_split["x2"]-tolerance < second_split["x1"]<first_split["x2"]+tolerance:
+                            hole1 = sector((second_split["x1"], second_split["y2"]), second_split["length"], first_split["width"]-wall_width, 0, 90)
+                            hole2 = polygon_from_bounds(first_split)
+                            hole3 = polygon_from_bounds(second_split)
+                            hole = [unary_union([g.buffer(tolerance) for g in (hole1, hole2, hole3)]).buffer(-tolerance), "left, top"]
+                            if hole[0].geom_type != "Polygon":
+                                print("not_correct 1")
+                            holes.append(hole)
+                            split_walls[base_index]["black_holes"][i]["done"] = True
+                            split_walls[base_index]["black_holes"][j]["done"] = True
+                        # left short, top long 2
+                        elif first_split["y1"]-tolerance < second_split["y2"]<first_split["y1"] + tolerance and first_split["x1"]-tolerance < second_split["x1"]<first_split["x1"]+tolerance:
+                            hole1 = sector((first_split["x2"], first_split["y1"]), second_split["length"]-wall_width, first_split["width"], 0, 90)
+                            hole2 = polygon_from_bounds(first_split)
+                            hole3 = polygon_from_bounds(second_split)
+                            hole = [unary_union([g.buffer(tolerance) for g in (hole1, hole2, hole3)]).buffer(-tolerance), "left, top"]
+                            if hole[0].geom_type != "Polygon":
+                                print("not_correct 2")
+                            holes.append(hole)
+                            split_walls[base_index]["black_holes"][i]["done"] = True
+                            split_walls[base_index]["black_holes"][j]["done"] = True
+
+                    if first_direction == "right" and second_direction == "up":
+                        # left short, bottom long 3
+                        if first_split["y2"] - tolerance < second_split["y1"] < first_split["y2"] + tolerance and first_split["x1"] - tolerance < second_split["x1"] < first_split["x1"] + tolerance:
+                            hole1 = sector((first_split["x2"], first_split["y2"]), second_split["length"]-wall_width, first_split["width"], 270, 360)
+                            hole2 = polygon_from_bounds(first_split)
+                            hole3 = polygon_from_bounds(second_split)
+                            hole = [unary_union([g.buffer(tolerance) for g in (hole1, hole2, hole3)]).buffer(-tolerance), "left, bottom"]
+                            if hole[0].geom_type != "Polygon":
+                                print("not_correct 3")
+                            holes.append(hole)
+                            split_walls[base_index]["black_holes"][i]["done"] = True
+                            split_walls[base_index]["black_holes"][j]["done"] = True
+                        # left long, bottom short 4
+                        elif first_split["y2"] - tolerance < second_split["y2"] < first_split["y2"] + tolerance and first_split["x2"] - tolerance < second_split["x1"] < first_split["x2"] + tolerance:
+                            hole1 = sector((second_split["x1"], second_split["y1"]), second_split["length"], first_split["width"]-wall_width, 270, 360)
+                            hole2 = polygon_from_bounds(first_split)
+                            hole3 = polygon_from_bounds(second_split)
+                            hole = [unary_union([g.buffer(tolerance) for g in (hole1, hole2, hole3)]).buffer(-tolerance), "left, bottom"]
+                            if hole[0].geom_type != "Polygon":
+                                print("not_correct 4")
+                            holes.append(hole)
+                            split_walls[base_index]["black_holes"][i]["done"] = True
+                            split_walls[base_index]["black_holes"][j]["done"] = True
+
+                    if first_direction == "left" and second_direction == "down":
+                        # right long, top short 5
+                        if first_split["y1"] - tolerance < second_split["y1"] < first_split["y1"] + tolerance and first_split["x1"] - tolerance < second_split["x2"] < first_split["x1"] + tolerance:
+                            hole1 = sector((second_split["x2"], second_split["y2"]), second_split["length"], first_split["width"]-wall_width, 90, 180)
+                            hole2 = polygon_from_bounds(first_split)
+                            hole3 = polygon_from_bounds(second_split)
+                            hole = [unary_union([g.buffer(tolerance) for g in (hole1, hole2, hole3)]).buffer(-tolerance), "right, top"]
+                            if hole[0].geom_type != "Polygon":
+                                print("not_correct 5")
+                            holes.append(hole)
+                            split_walls[base_index]["black_holes"][i]["done"] = True
+                            split_walls[base_index]["black_holes"][j]["done"] = True
+
+                        # right short, top long 6
+                        elif first_split["y1"] - tolerance < second_split["y2"] < first_split["y1"] + tolerance and first_split["x2"] - tolerance < second_split["x2"] < first_split["x2"] + tolerance:
+                            hole1 =sector((first_split["x1"], first_split["y1"]), second_split["length"]-wall_width, first_split["width"], 90, 180)
+                            hole2 = polygon_from_bounds(first_split)
+                            hole3 = polygon_from_bounds(second_split)
+                            hole = [unary_union([g.buffer(tolerance) for g in (hole1, hole2, hole3)]).buffer(-tolerance), "right, top"]
+                            if hole[0].geom_type != "Polygon":
+                                print("not_correct 6")
+                            holes.append(hole)
+                            split_walls[base_index]["black_holes"][i]["done"] = True
+                            split_walls[base_index]["black_holes"][j]["done"] = True
+
+                    if first_direction == "left" and second_direction == "up":
+                        # right_short, bottom long 7
+                        if first_split["y2"] - tolerance < second_split["y1"] < first_split["y2"] + tolerance and first_split["x2"] - tolerance < second_split["x2"] < first_split["x2"] + tolerance:
+                            hole1 = sector((first_split["x1"], first_split["y2"]), second_split["length"]-wall_width, first_split["width"], 180, 270)
+                            hole2 = polygon_from_bounds(first_split)
+                            hole3 = polygon_from_bounds(second_split)
+                            hole = [unary_union([g.buffer(tolerance) for g in (hole1, hole2, hole3)]).buffer(-tolerance), "right, bottom"]
+                            if hole[0].geom_type != "Polygon":
+                                print("not_correct 7")
+                            holes.append(hole)
+                            split_walls[base_index]["black_holes"][i]["done"] = True
+                            split_walls[base_index]["black_holes"][j]["done"] = True
+                        # right long, bottom short 8
+                        elif first_split["y2"] - tolerance < second_split["y2"] < first_split["y2"] + tolerance and first_split["x1"] - tolerance < second_split["x2"] < first_split["x1"] + tolerance:
+                            first_split = {"x1": first_split["x1"],"x2": first_split["x2"],"y1": first_split["y1"],"y2": first_split["y2"]}
+                            second_split = {"x1": second_split["x1"],"x2": second_split["x2"],"y1": second_split["y1"],"y2": second_split["y2"]}
+                            hole1 = sector((second_split["x2"], second_split["y1"]), second_split["length"], first_split["width"]-wall_width, 180,270)
+                            hole2 = polygon_from_bounds(first_split)
+                            hole3 = polygon_from_bounds(second_split)
+                            hole = [unary_union([g.buffer(tolerance) for g in (hole1, hole2, hole3)]).buffer(-tolerance), "right, bottom"]
+                            if hole[0].geom_type != "Polygon":
+                                print("not_correct 8")
+                            holes.append(hole)
+                            split_walls[base_index]["black_holes"][i]["done"] = True
+                            split_walls[base_index]["black_holes"][j]["done"] = True
+
+        for i in range(len(split_walls[base_index]["black_holes"])):
+            split_direction = split_walls[base_index]["black_holes"][i]["direction"]
+            split = split_walls[base_index]["black_holes"][i]["bounds"]
+            split["x1"] -= tolerance
+            split["x2"] += tolerance
+            split["y1"] -= tolerance
+            split["y2"] += tolerance
+            if "done" not in split_walls[base_index]["black_holes"][i]:
+                if split_direction == "down" or split_direction == "up":
+                    max_width = (walls[base_index]["bounds"]["y2"]- walls[base_index]["bounds"]["y1"]-wall_width)/4
+                    if split_direction == "down":
+                        split_extended_bounds = {"x1": split["x1"],"x2": split["x2"],"y1": split["y1"],"y2": split["y2"]}
+                        hole1 = sector(((split_extended_bounds["x1"] + split_extended_bounds["x2"])/2, split_extended_bounds["y2"]), (split_extended_bounds["x2"] - split_extended_bounds["x1"])/2, min(max_width, 8), 0,180)
+                        hole2 = polygon_from_bounds(split_extended_bounds)
+                        hole = [unary_union([g.buffer(tolerance) for g in (hole1, hole2)]).buffer(-tolerance), "top"]
+                        if hole[0].geom_type != "Polygon":
+                            print("not_correct down")
+                        holes.append(hole)
+                    elif split_direction == "up":
+                        split_extended_bounds = {"x1": split["x1"],"x2": split["x2"],"y1": split["y1"],"y2": split["y2"]}
+                        hole1 = sector(((split_extended_bounds["x1"] + split_extended_bounds["x2"])/2, split_extended_bounds["y1"]), (split_extended_bounds["x2"] - split_extended_bounds["x1"])/2, min(max_width, 8), 180,360)
+                        hole2 = polygon_from_bounds(split_extended_bounds)
+                        hole = [unary_union([g.buffer(tolerance) for g in (hole1, hole2)]).buffer(-tolerance), "bottom"]
+                        if hole[0].geom_type != "Polygon":
+                            print("not_correct up")
+                        holes.append(hole)
+                if split_direction == "right" or split_direction == "left":
+                    max_width = (walls[base_index]["bounds"]["y2"] - walls[base_index]["bounds"]["y1"] - wall_width) / 4
+                    if split_direction == "right":
+                        split_extended_bounds = {"x1": split["x1"], "x2": split["x2"],"y1": split["y1"],"y2": split["y2"]}
+                        hole1 = sector((split_extended_bounds["x2"] ,(split_extended_bounds["y1"] + split_extended_bounds["y2"]) / 2), min(max_width, 8), (split_extended_bounds["y2"] - split_extended_bounds["y1"])/2, -90, 90)
+                        hole2 = polygon_from_bounds(split_extended_bounds)
+                        hole = [unary_union([g.buffer(tolerance) for g in (hole1, hole2)]).buffer(-tolerance), "left"]
+                        if hole[0].geom_type != "Polygon":
+                            print("not_correct right")
+                        holes.append(hole)
+                    elif split_direction == "left":
+                        split_extended_bounds = {"x1": split["x1"], "x2": split["x2"],"y1": split["y1"],"y2": split["y2"]}
+                        hole1 = sector((split_extended_bounds["x1"] ,(split_extended_bounds["y1"] + split_extended_bounds["y2"]) / 2), min(max_width, 8), (split_extended_bounds["y2"] - split_extended_bounds["y1"])/2, 90, 270)
+                        hole2 = polygon_from_bounds(split_extended_bounds)
+                        hole = [unary_union([g.buffer(tolerance) for g in (hole1, hole2)]).buffer(-tolerance), "right"]
+                        if hole[0].geom_type != "Polygon":
+                            print("not_correct left")
+                        holes.append(hole)
+
+        walls[base_index]["black_holes"] = holes
 
     return split_walls
 
@@ -527,7 +728,8 @@ def modify_and_plot_walls_by_parent_id(
                     fb["polygon"] = polygon_from_bounds(fb)
 
         final_parent_walls = split_walls_around_black_fills(
-            parent_walls
+            parent_walls,
+            wall_width
         )
 
         final_walls_by_parent[parent_id] = final_parent_walls

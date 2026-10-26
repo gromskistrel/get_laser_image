@@ -1093,9 +1093,13 @@ def plot_2d_projection(
     wall_name=None,
     orientation=None,
     arc_steps=33,
+    black_holes=None,
 ):
     """
     Draw one 2D wall projection and return the complete projected geometry.
+
+    black_holes are extra shapely cut-outs already in the projected 2D plane
+    (e.g. the base's black holes), drawn on top as holes.
     """
     solids = [normalize(c) for c in solids]
     holes = [normalize(h) for h in (holes or [])]
@@ -1173,6 +1177,17 @@ def plot_2d_projection(
                     (h[b1], h[c1]),
                     h[b2] - h[b1],
                     h[c2] - h[c1],
+                    linewidth=0,
+                    facecolor="white",
+                )
+            )
+
+    for black_hole in black_holes or []:
+        for polygon in _iter_union_polygons(black_hole):
+            ax.add_patch(
+                patches.Polygon(
+                    list(polygon.exterior.coords),
+                    closed=True,
                     linewidth=0,
                     facecolor="white",
                 )
@@ -1347,7 +1362,7 @@ def _iter_union_polygons(geometry):
             yield from _iter_union_polygons(part)
 
 
-def _element_return_data(geometry_2d):
+def _element_return_data(geometry_2d, black_holes=None):
     """
     Merge all projected solid cells into their true 2D wall shape.
 
@@ -1355,6 +1370,9 @@ def _element_return_data(geometry_2d):
     fully enclosed empty areas are returned as separate inside-hole polygons.
     Openings/notches that touch the outside boundary become part of the exterior
     polygon and are not returned as holes.
+
+    black_holes are extra shapely cut-outs in the projected 2D plane that are
+    subtracted from the merged shape.
 
     All returned coordinates are translated so the complete element begins at
     (0, 0).
@@ -1393,6 +1411,12 @@ def _element_return_data(geometry_2d):
     # visible graph-generation path.
     if not merged.is_valid:
         merged = merged.buffer(0)
+
+    if black_holes:
+        cutout = unary_union(black_holes)
+        if not cutout.is_valid:
+            cutout = cutout.buffer(0)
+        merged = merged.difference(cutout)
 
     min_x, min_y, max_x, max_y = merged.bounds
     width = float(max_x - min_x)
@@ -1544,8 +1568,18 @@ def generate_wall_graphs_timed(
             orientation=orientation,
         )
 
+        # base black holes are stored as [polygon, side] pairs or bare polygons
+        black_holes = []
+        if isinstance(wall, dict):
+            black_holes = [
+                entry[0] if isinstance(entry, (list, tuple)) else entry
+                for entry in wall.get("black_holes", [])
+            ]
+
+        written_number = wall.get("written_number") if isinstance(wall, dict) else None
+
         merged_groups.append(
-            (wall_name, orientation, thickness_axis, result, holes)
+            (wall_name, orientation, thickness_axis, result, holes, black_holes, written_number)
         )
         combined_result.extend(result)
 
@@ -1565,7 +1599,7 @@ def generate_wall_graphs_timed(
     print("\n--- Plotting separate 2D images ---")
     returned_elements = []
 
-    for wall_name, orientation, thickness_axis, result, holes in merged_groups:
+    for wall_name, orientation, thickness_axis, result, holes, black_holes, written_number in merged_groups:
         file_stem = safe_filename(wall_name)
         save_path = out_dir / f"{file_stem}.png"
 
@@ -1579,11 +1613,20 @@ def generate_wall_graphs_timed(
             wall_name=wall_name,
             orientation=orientation,
             arc_steps=polygon_arc_steps,
+            black_holes=black_holes,
         )
 
-        returned_elements.append(
-            _element_return_data(geometry_2d)
-        )
+        element = _element_return_data(geometry_2d, black_holes=black_holes)
+        if written_number is not None:
+            # shift into the same local coordinates as the element's points
+            origin = element["original_origin"]
+            x, y = written_number["point"]
+            element["written_number"] = {
+                "number": written_number["number"],
+                "size": written_number.get("size", 3),
+                "point": {"x": float(x - origin["x"]), "y": float(y - origin["y"])},
+            }
+        returned_elements.append(element)
 
     print(f"\nTOTAL: {perf_counter() - total_start:.3f}s")
     return returned_elements

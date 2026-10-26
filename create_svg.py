@@ -241,6 +241,18 @@ def objects_to_svg(
             f'fill="{fill}" fill-rule="evenodd" stroke="black" stroke-width="{stroke_width}" '
             f'vector-effect="non-scaling-stroke"/>'
         )
+        written = obj.get("written_number")
+        if written:
+            # Drawn in the object's local frame, so it moves/rotates with the object.
+            # The text fills the box (x, y)..(x + size, y + size); its baseline is
+            # on the y + size edge, which is the bottom edge in the SVG view.
+            size = float(written.get("size", 3))
+            wx, wy = float(written["point"]["x"]), float(written["point"]["y"])
+            parts.append(
+                f'<text x="{wx}" y="{wy + size}" transform="{transform}" '
+                f'font-family="sans-serif" font-size="{size}" fill="black">'
+                f'{escape(str(written["number"]))}</text>'
+            )
         if show_labels:
             label = escape(str(obj.get("id", i)))
             parts.append(

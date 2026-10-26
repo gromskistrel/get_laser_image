@@ -1,6 +1,8 @@
 import copy
 
-from shapely.geometry import box
+from shapely.geometry import box, Point, Polygon
+from shapely.ops import unary_union
+import numpy as np
 
 
 def update_bounds_size(bounds):
@@ -187,16 +189,51 @@ def insert_black_wall_into_line_fill(line, black_wall):
 
     return line
 
+def sector(center, rx, ry, start_deg, end_deg, n=64):
+    """Elliptical pie slice from start_deg to end_deg (CCW from +x, true angles)."""
+    cx, cy = center
+    if end_deg < start_deg:
+        end_deg += 360
+    phi = np.radians(np.linspace(start_deg, end_deg, n))
+    # distance from center to the ellipse edge at angle phi
+    r = rx * ry / np.sqrt((ry * np.cos(phi))**2 + (rx * np.sin(phi))**2)
+    x = cx + r * np.cos(phi)
+    y = cy + r * np.sin(phi)
+    return Polygon([(cx, cy)] + list(zip(x, y)))
 
-def split_wall_around_black_fills(wall):
+def split_wall_around_black_fills(wall, base_wall):
     if wall.get("type") == "base":
-        return [wall]
+        return [wall], base_wall
 
     fill = wall.get("fill", [])
     black_fills = [f for f in fill if f.get("color") == "#000000"]
 
     if not black_fills:
-        return [wall]
+        return [wall], base_wall
+
+    for black_hole in black_fills:
+        bounds = black_hole["bounds"]
+        point_left = Point(bounds["x1"]-1, (bounds["y1"]+bounds["y2"])/2)
+        point_right = Point(bounds["x2"] + 1, (bounds["y1"] + bounds["y2"]) / 2)
+        point_top = Point((bounds["x2"]+bounds["x1"])/2, bounds["y1"]-1)
+
+        if not base_wall["polygon"].contains(point_left):
+            direction = "right"
+        elif not base_wall["polygon"].contains(point_right):
+            direction = "left"
+        elif not base_wall["polygon"].contains(point_top):
+            direction = "down"
+        else:
+            direction = "up"
+
+        append_black_fill = []
+        for bfill in black_fills:
+            append_black_fill.append({"bounds": bfill["bounds"], "direction": direction})
+
+        if "black_holes" not in base_wall:
+            base_wall["black_holes"] = append_black_fill
+        else:
+            base_wall["black_holes"] += append_black_fill
 
     wall = copy.deepcopy(wall)
     b = wall["bounds"]
@@ -238,8 +275,7 @@ def split_wall_around_black_fills(wall):
             new_wall["fill"] = [
                 sync_fill_bounds_to_line(f, new_wall)
                 for f in fill
-                if f.get("color") != "#000000"
-                and f["bounds"][start_key] < black_start
+                if f["bounds"][start_key] < black_start
                 and f["bounds"][end_key] > current_start
             ]
 
@@ -260,21 +296,72 @@ def split_wall_around_black_fills(wall):
         new_wall["fill"] = [
             sync_fill_bounds_to_line(f, new_wall)
             for f in fill
-            if f.get("color") != "#000000"
-            and f["bounds"][start_key] < b[end_key]
+            if f["bounds"][start_key] < b[end_key]
             and f["bounds"][end_key] > current_start
         ]
 
         pieces.append(new_wall)
 
-    return pieces
+    return pieces, base_wall
 
 
 def split_walls_around_black_fills(walls):
     split_walls = []
+    base_index = 0
+    tolerance = 1e-3
+    for i, wall in enumerate(walls):
+        if wall["type"] == "base":
+            base_index = i
 
     for wall in walls:
-        split_walls.extend(split_wall_around_black_fills(wall))
+        wall_result, walls[base_index] = split_wall_around_black_fills(wall, walls[base_index])
+        split_walls.extend(wall_result)
+
+    for i, wall in enumerate(split_walls):
+        if wall["type"] == "base":
+            base_index = i
+
+    holes = []
+    if "black_holes" in split_walls[base_index]:
+        for i in range(len(split_walls[base_index]["black_holes"])):
+            bounds = split_walls[base_index]["black_holes"][i]["bounds"]
+            direction = split_walls[base_index]["black_holes"][i]["direction"]
+            if direction == "down":
+                hole1 = sector(
+                    ((bounds["x1"] + bounds["x2"]) / 2, bounds["y2"]),
+                    (bounds["x2"] - bounds["x1"]) / 2, 10, 0, 180)
+                hole2 = polygon_from_bounds(bounds)
+                hole = [unary_union([g.buffer(tolerance) for g in (hole1, hole2)]).buffer(-tolerance), "top"]
+                if hole[0].geom_type != "Polygon":
+                    print("not_correct down")
+                holes.append(hole)
+            elif direction == "up":
+                hole1 = sector(((bounds["x1"] + bounds["x2"]) / 2, bounds["y1"]), (bounds["x2"] - bounds["x1"]) / 2, 10, 180,
+                               360)
+                hole2 = polygon_from_bounds(bounds)
+                hole = [unary_union([g.buffer(tolerance) for g in (hole1, hole2)]).buffer(-tolerance), "bottom"]
+                if hole[0].geom_type != "Polygon":
+                    print("not_correct up")
+                holes.append(hole)
+            elif direction == "right":
+                hole1 = sector(
+                    (bounds["x2"], (bounds["y1"] + bounds["y2"]) / 2),
+                    10, (bounds["y2"] - bounds["y1"]) / 2, -90, 90)
+                hole2 = polygon_from_bounds(bounds)
+                hole = [unary_union([g.buffer(tolerance) for g in (hole1, hole2)]).buffer(-tolerance), "left"]
+                if hole[0].geom_type != "Polygon":
+                    print("not_correct right")
+                holes.append(hole)
+            else:
+                hole1 = sector((bounds["x1"], (bounds["y1"] + bounds["y2"]) / 2), 10, (bounds["y2"] - bounds["y1"]) / 2, 90,
+                               270)
+                hole2 = polygon_from_bounds(bounds)
+                hole = [unary_union([g.buffer(tolerance) for g in (hole1, hole2)]).buffer(-tolerance), "right"]
+                if hole[0].geom_type != "Polygon":
+                    print("not_correct left")
+                holes.append(hole)
+
+    split_walls[base_index]["black_holes"] = holes
 
     return split_walls
 
@@ -372,17 +459,6 @@ def get_path_base(layers, wall_thickness):
             for i in range(len(lines)):
                 next_i = (i + 1) % len(lines)
                 lines[i]["angle"] = turn_between(lines[i], lines[next_i])
-
-            '''increase_direction = {0: {"x": -laser_width/2, "y": -laser_width/2}, 1: {"x": laser_width/2, "y": -laser_width/2}, 2: {"x": laser_width/2, "y": laser_width/2}, 3: {"x": -laser_width/2, "y": laser_width/2}}
-            line_direction = 0
-            for i in range(len(lines)):
-                print("lines", lines[i]["angle"], lines[i-1]["angle"])
-                line_direction += (lines[i]["angle"] + lines[i-1]["angle"])/2
-                lines[i]["bounds"]["x2"] += increase_direction[line_direction % 4]["x"]
-                lines[i]["bounds"]["y2"] += increase_direction[line_direction % 4]["y"]
-                lines[(i+1)%len(lines)]["bounds"]["x1"] += increase_direction[line_direction % 4]["x"]
-                lines[(i+1)%len(lines)]["bounds"]["y1"] += increase_direction[line_direction % 4]["y"]
-                print(i, line_direction)'''
 
             for i in range(len(lines)):
                 if i == 0:

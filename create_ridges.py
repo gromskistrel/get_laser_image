@@ -241,9 +241,6 @@ def polygon_from_any_bounds(bounds):
     return bounds_poly_from_dict(bounds)
 
 def plot_single_polygon_debug(key, polygon, out_dir):
-    for poly in polygon:
-        if "rect22" in poly["id"]:
-            print("yay")
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -258,6 +255,15 @@ def plot_single_polygon_debug(key, polygon, out_dir):
                 linewidth=1,
                 alpha=0.4,
             )
+
+            for black_hole in rectangle.get("black_holes", []):
+                plot_polygon(
+                    black_hole[0],
+                    fill_color="#000000",
+                    edge_color="black",
+                    linewidth=1,
+                    alpha=0.8,
+                )
         else:
             plot_wall_with_fill_parts(
                 rectangle,
