@@ -354,3 +354,78 @@ def load_svg_layers(svg_file, round_digits=6):
             })
 
     return layers
+
+def load_svg_texts(svg_file, round_digits=6):
+    """
+    Return {layer_name: [text, ...]} with every non-empty <text> of the svg.
+
+    Every text is split into its lines (one per <tspan> with its own x/y, as Inkscape
+    writes them). Positions are in document coordinates (all transforms applied),
+    font_size is scaled by the transform and rotation is in degrees.
+    """
+    svg_file = Path(svg_file)
+
+    tree = ET.parse(svg_file)
+    root = tree.getroot()
+
+    parent_map = {
+        child: parent
+        for parent in root.iter()
+        for child in parent
+    }
+
+    texts = {}
+
+    for layer in root.iter():
+        if not is_layer(layer):
+            continue
+
+        layer_name = layer.get(f"{INKSCAPE_NS}label", layer.get("id", "unnamed"))
+        texts[layer_name] = []
+
+        for elem in layer.iter():
+            if tag_name(elem) != "text":
+                continue
+
+            a, b, d, e, xoff, yoff = get_transform_chain(elem, parent_map)
+            scale = math.sqrt(a * a + d * d)
+            rotation = math.degrees(math.atan2(d, a))
+
+            font_size = parse_svg_length(get_style_value(elem, "font-size") or elem.get("font-size"), default=0.0)
+
+            # flowed text (shape-inside) already stores the start of every line in the tspan x,
+            # so text-align must not be used as an anchor
+            anchor = get_style_value(elem, "text-anchor") or "start"
+
+            tspans = [child for child in elem if tag_name(child) == "tspan"]
+            if not tspans:
+                tspans = [elem]
+
+            lines = []
+            for tspan in tspans:
+                line_text = "".join(tspan.itertext()).replace("\n", " ").strip()
+                if not line_text:
+                    continue
+
+                x = float(tspan.get("x", elem.get("x", 0)))
+                y = float(tspan.get("y", elem.get("y", 0)))
+                line_font_size = parse_svg_length(get_style_value(tspan, "font-size"), default=font_size)
+
+                lines.append({
+                    "text": line_text,
+                    "x": clean_float(a * x + b * y + xoff, round_digits),
+                    "y": clean_float(d * x + e * y + yoff, round_digits),
+                    "font_size": clean_float(line_font_size * scale, round_digits),
+                })
+
+            if not lines:
+                continue
+
+            texts[layer_name].append({
+                "id": elem.get("id", "no_id"),
+                "lines": lines,
+                "anchor": anchor,
+                "rotation": clean_float(rotation, round_digits),
+            })
+
+    return texts

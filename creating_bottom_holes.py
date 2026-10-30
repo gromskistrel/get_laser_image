@@ -1577,9 +1577,10 @@ def generate_wall_graphs_timed(
             ]
 
         written_number = wall.get("written_number") if isinstance(wall, dict) else None
+        texts = wall.get("texts", []) if isinstance(wall, dict) else []
 
         merged_groups.append(
-            (wall_name, orientation, thickness_axis, result, holes, black_holes, written_number)
+            (wall_name, orientation, thickness_axis, result, holes, black_holes, written_number, texts)
         )
         combined_result.extend(result)
 
@@ -1599,7 +1600,7 @@ def generate_wall_graphs_timed(
     print("\n--- Plotting separate 2D images ---")
     returned_elements = []
 
-    for wall_name, orientation, thickness_axis, result, holes, black_holes, written_number in merged_groups:
+    for wall_name, orientation, thickness_axis, result, holes, black_holes, written_number, texts in merged_groups:
         file_stem = safe_filename(wall_name)
         save_path = out_dir / f"{file_stem}.png"
 
@@ -1624,8 +1625,29 @@ def generate_wall_graphs_timed(
             element["written_number"] = {
                 "number": written_number["number"],
                 "size": written_number.get("size", 3),
+                "direction": written_number.get("direction", "horizontal"),
                 "point": {"x": float(x - origin["x"]), "y": float(y - origin["y"])},
             }
+        if texts:
+            # svg texts of a base, also shifted into the element's local coordinates
+            origin = element["original_origin"]
+            element["texts"] = [
+                {
+                    "id": text["id"],
+                    "anchor": text["anchor"],
+                    "rotation": text["rotation"],
+                    "lines": [
+                        {
+                            "text": line["text"],
+                            "font_size": line["font_size"],
+                            "x": float(line["x"] - origin["x"]),
+                            "y": float(line["y"] - origin["y"]),
+                        }
+                        for line in text["lines"]
+                    ],
+                }
+                for text in texts
+            ]
         returned_elements.append(element)
 
     print(f"\nTOTAL: {perf_counter() - total_start:.3f}s")

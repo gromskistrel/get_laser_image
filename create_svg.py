@@ -246,13 +246,31 @@ def objects_to_svg(
             # Drawn in the object's local frame, so it moves/rotates with the object.
             # The text fills the box (x, y)..(x + size, y + size); its baseline is
             # on the y + size edge, which is the bottom edge in the SVG view.
+            # Vertical text is turned 90 degrees and reads upwards, still inside the same box.
             size = float(written.get("size", 3))
             wx, wy = float(written["point"]["x"]), float(written["point"]["y"])
+            text_x, text_transform = wx, transform
+            if written.get("direction") == "vertical":
+                text_x = wx + size
+                text_transform += f' rotate(-90,{text_x},{wy + size})'
             parts.append(
-                f'<text x="{wx}" y="{wy + size}" transform="{transform}" '
-                f'font-family="sans-serif" font-size="{size}" fill="black">'
+                f'<text x="{text_x}" y="{wy + size}" transform="{text_transform}" '
+                f'font-family="sans-serif" font-size="{size}" fill="red">'
                 f'{escape(str(written["number"]))}</text>'
             )
+        for text in obj.get("texts", []):
+            # svg texts of the base, one <text> per line at its original position, size and rotation
+            for line in text["lines"]:
+                lx, ly = float(line["x"]), float(line["y"])
+                text_transform = transform
+                if text.get("rotation"):
+                    text_transform += f' rotate({text["rotation"]},{lx},{ly})'
+                parts.append(
+                    f'<text x="{lx}" y="{ly}" transform="{text_transform}" '
+                    f'font-family="sans-serif" font-size="{line["font_size"]}" '
+                    f'text-anchor="{text.get("anchor", "start")}" fill="red">'
+                    f'{escape(line["text"])}</text>'
+                )
         if show_labels:
             label = escape(str(obj.get("id", i)))
             parts.append(

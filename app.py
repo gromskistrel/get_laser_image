@@ -1,9 +1,9 @@
 from pathlib import Path
 
-from data_receiver import load_svg_layers
+from data_receiver import load_svg_layers, load_svg_texts
 from polygon_grouping import group_objects_inside_layers, group_objects_inside_layers_v4
 from data_representation import render_grouped_layers
-from laser_width_correction import get_laser_width_correction, get_wall_numbering
+from laser_width_correction import get_laser_width_correction, get_wall_numbering, get_base_texts
 from wall_generation import generate_and_render_walls
 from path_generation import get_path_base
 from get_touching_points import modify_and_plot_wall_layers
@@ -61,7 +61,11 @@ def main():
 
     walls_with_laser_correction = get_laser_width_correction(walls_with_ridges, laser_width, wall_thickness)
 
-    wall_numbering = get_wall_numbering(walls_with_laser_correction)
+    wall_numbering = get_wall_numbering(walls_with_laser_correction, wall_thickness)
+
+    # texts from the svg go on the base that covers them
+    svg_texts = load_svg_texts(SVG_FILE)
+    walls_with_laser_correction = get_base_texts(walls_with_laser_correction, svg_texts)
     """
     walls = []
 
@@ -76,23 +80,27 @@ def main():
         semi_steps_2d=256,
     )
     """
-    walls = []
-    for wall_group in walls_with_laser_correction["Layer 1"].values():
-        walls.extend(wall_group)
+    # images per layer (own folder, so combined_walls_3d.png is not overwritten), outputs merged for the svg
+    outputs = []
+    for layer_name, wall_groups in walls_with_laser_correction.items():
+        walls = []
+        for wall_group in wall_groups.values():
+            walls.extend(wall_group)
 
-    outputs = generate_wall_graphs_timed(
-        walls=walls,
-        out_dir=WALL_DIR / "holes",
-        wall_width=wall_thickness,
-        semi_steps_3d=8,  # currently has no effect
-        semi_steps_2d=12,  # reduce from 256
-        polygon_arc_steps=64,  # keeps returned/drawn 2D arcs reasonably smooth
-    )
+        layer_outputs = generate_wall_graphs_timed(
+            walls=walls,
+            out_dir=WALL_DIR / "holes" / layer_name,
+            wall_width=wall_thickness,
+            semi_steps_3d=8,  # currently has no effect
+            semi_steps_2d=12,  # reduce from 256
+            polygon_arc_steps=64,  # keeps returned/drawn 2D arcs reasonably smooth
+        )
+        outputs.extend(layer_outputs)
 
     svg, placements = objects_to_svg(
         outputs,
         rectangle_width=300,  # your sheet width
-        rectangle_height=200,  # your sheet height
+        rectangle_height=300,  # your sheet height
         padding=5,
         allow_rotate=True,
     )
